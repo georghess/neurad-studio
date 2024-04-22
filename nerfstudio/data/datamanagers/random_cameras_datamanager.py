@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 The Nerfstudio Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -235,7 +236,7 @@ class RandomCamerasDataManager(DataManager):  # pylint: disable=abstract-method
         self.eval_dataset = TrivialDataset(cameras)
 
         self.eval_dataloader = RandIndicesEvalDataloader(
-            input_dataset=self.eval_dataset,
+            dataset=self.eval_dataset,
             device=self.device,
             num_workers=self.world_size * 4,
         )

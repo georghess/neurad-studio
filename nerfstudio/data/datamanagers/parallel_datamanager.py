@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -212,7 +213,7 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
     def create_eval_dataset(self) -> TDataset:
         """Sets up the data loaders for evaluation."""
         return self.dataset_type(
-            dataparser_outputs=self.dataparser.get_dataparser_outputs(split=self.test_split),
+            dataparser_outputs=self.eval_dataparser_outputs,
             scale_factor=self.config.camera_res_scale_factor,
         )
 
@@ -274,12 +275,12 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
         self.eval_ray_generator = RayGenerator(self.eval_dataset.cameras.to(self.device))
         # for loading full images
         self.fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(
-            input_dataset=self.eval_dataset,
+            dataset=self.eval_dataset,
             device=self.device,
             num_workers=self.world_size * 4,
         )
         self.eval_dataloader = RandIndicesEvalDataloader(
-            input_dataset=self.eval_dataset,
+            dataset=self.eval_dataset,
             device=self.device,
             num_workers=self.world_size * 4,
         )
@@ -331,6 +332,10 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
             A list of dictionaries containing the data manager's param groups.
         """
         return {}
+
+    def get_num_train_data(self) -> int:
+        """Get the number of training datapoints (e.g. images)."""
+        return len(self.train_dataset.cameras)
 
     def __del__(self):
         """Clean up the parallel data processes."""

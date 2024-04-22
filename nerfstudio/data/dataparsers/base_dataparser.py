@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,9 +67,13 @@ class DataparserOutputs:
     Will be processed by the InputDataset to create any additional tensors that may be required.
     """
     dataparser_transform: Float[Tensor, "3 4"] = torch.eye(4)[:3, :]
-    """Transform applied by the dataparser."""
+    """Transform applied by the dataparser to the entire scene."""
+    actor_transform: Float[Tensor, "3 4"] = torch.eye(4)[:3, :]
+    """Transform applied by the dataparser to each actor's local frame."""
     dataparser_scale: float = 1.0
     """Scale applied by the dataparser."""
+    time_offset: float = 0.0
+    """Time offset (min time)."""
 
     def as_dict(self) -> dict:
         """Returns the dataclass as a dictionary."""
@@ -84,6 +89,7 @@ class DataparserOutputs:
         data = {
             "transform": self.dataparser_transform.tolist(),
             "scale": float(self.dataparser_scale),
+            "time-offset": self.time_offset,
         }
         if not path.parent.exists():
             path.parent.mkdir(parents=True)

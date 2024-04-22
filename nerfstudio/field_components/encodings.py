@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -319,6 +320,7 @@ class HashEncoding(Encoding):
         hash_init_scale: Value to initialize hash grid.
         implementation: Implementation of hash encoding. Fallback to torch if tcnn not available.
         interpolation: Interpolation override for tcnn hashgrid. Not supported for torch unless linear.
+        n_input_dims: Number of input dimensions (typically 3 for x,y,z)
     """
 
     def __init__(
@@ -331,6 +333,7 @@ class HashEncoding(Encoding):
         hash_init_scale: float = 0.001,
         implementation: Literal["tcnn", "torch"] = "tcnn",
         interpolation: Optional[Literal["Nearest", "Linear", "Smoothstep"]] = None,
+        n_input_dims: int = 3,
     ) -> None:
         super().__init__(in_dim=3)
         self.num_levels = num_levels
@@ -339,10 +342,12 @@ class HashEncoding(Encoding):
         self.hash_init_scale = hash_init_scale
         self.log2_hashmap_size = log2_hashmap_size
         self.hash_table_size = 2**log2_hashmap_size
+        self.min_res = min_res
+        self.hash_init_scale = hash_init_scale
 
         levels = torch.arange(num_levels)
-        self.growth_factor = np.exp((np.log(max_res) - np.log(min_res)) / (num_levels - 1)) if num_levels > 1 else 1
-        self.scalings = torch.floor(min_res * self.growth_factor**levels)
+        self.growth_factor = np.exp((np.log(max_res) - np.log(min_res)) / (num_levels - 1)) if num_levels > 1 else 1.0
+        self.register_buffer("scalings", torch.floor(min_res * self.growth_factor**levels))
 
         self.hash_offset = levels * self.hash_table_size
 
@@ -363,7 +368,7 @@ class HashEncoding(Encoding):
                 interpolation=interpolation,
             )
             self.tcnn_encoding = tcnn.Encoding(
-                n_input_dims=3,
+                n_input_dims=n_input_dims,
                 encoding_config=encoding_config,
             )
 
@@ -759,7 +764,7 @@ class SHEncoding(Encoding):
         levels: Number of spherical harmonic levels to encode.
     """
 
-    def __init__(self, levels: int = 4, implementation: Literal["tcnn", "torch"] = "torch") -> None:
+    def __init__(self, levels: int = 4, implementation: Literal["tcnn", "torch"] = "tcnn") -> None:
         super().__init__(in_dim=3)
 
         if levels <= 0 or levels > 4:

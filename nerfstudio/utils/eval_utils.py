@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +21,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Callable, Literal, Optional, Tuple
+from typing import Callable, List, Literal, Optional, Tuple
 
 import torch
 import yaml
@@ -31,7 +32,9 @@ from nerfstudio.pipelines.base_pipeline import Pipeline
 from nerfstudio.utils.rich_utils import CONSOLE
 
 
-def eval_load_checkpoint(config: TrainerConfig, pipeline: Pipeline) -> Tuple[Path, int]:
+def eval_load_checkpoint(
+    config: TrainerConfig, pipeline: Pipeline, strict: bool = True, ignore_keys: List = []
+) -> Tuple[Path, int]:
     ## TODO: ideally eventually want to get this to be the same as whatever is used to load train checkpoint too
     """Helper function to load checkpointed pipeline
 
@@ -59,7 +62,10 @@ def eval_load_checkpoint(config: TrainerConfig, pipeline: Pipeline) -> Tuple[Pat
     load_path = config.load_dir / f"step-{load_step:09d}.ckpt"
     assert load_path.exists(), f"Checkpoint {load_path} does not exist"
     loaded_state = torch.load(load_path, map_location="cpu")
-    pipeline.load_pipeline(loaded_state["pipeline"], loaded_state["step"])
+    for key in ignore_keys:
+        loaded_state["pipeline"].pop(key, None)
+
+    pipeline.load_pipeline(loaded_state["pipeline"], loaded_state["step"], strict)
     CONSOLE.print(f":white_check_mark: Done loading checkpoint from {load_path}")
     return load_path, load_step
 
@@ -69,6 +75,8 @@ def eval_setup(
     eval_num_rays_per_chunk: Optional[int] = None,
     test_mode: Literal["test", "val", "inference"] = "test",
     update_config_callback: Optional[Callable[[TrainerConfig], TrainerConfig]] = None,
+    strict_load: bool = True,
+    ignore_keys: List = [],
 ) -> Tuple[TrainerConfig, Pipeline, Path, int]:
     """Shared setup for loading a saved pipeline for evaluation.
 
@@ -107,6 +115,6 @@ def eval_setup(
     pipeline.eval()
 
     # load checkpointed information
-    checkpoint_path, step = eval_load_checkpoint(config, pipeline)
+    checkpoint_path, step = eval_load_checkpoint(config, pipeline, strict_load, ignore_keys)
 
     return config, pipeline, checkpoint_path, step

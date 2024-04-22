@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +26,7 @@ from typing import Optional
 
 import tyro
 
+from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.utils.eval_utils import eval_setup
 from nerfstudio.utils.rich_utils import CONSOLE
 
@@ -39,10 +41,12 @@ class ComputePSNR:
     output_path: Path = Path("output.json")
     # Optional path to save rendered outputs to.
     render_output_path: Optional[Path] = None
+    # Optional path to update the data root to
+    data_root_path: Optional[Path] = None
 
     def main(self) -> None:
         """Main function."""
-        config, pipeline, checkpoint_path, _ = eval_setup(self.load_config)
+        config, pipeline, checkpoint_path, _ = eval_setup(self.load_config, update_config_callback=self.update_config)
         assert self.output_path.suffix == ".json"
         if self.render_output_path is not None:
             self.render_output_path.mkdir(parents=True, exist_ok=True)
@@ -58,6 +62,11 @@ class ComputePSNR:
         # Save output to output file
         self.output_path.write_text(json.dumps(benchmark_info, indent=2), "utf8")
         CONSOLE.print(f"Saved results to: {self.output_path}")
+
+    def update_config(self, config: TrainerConfig) -> TrainerConfig:
+        config.pipeline.datamanager.dataparser.data = self.data_root_path
+
+        return config
 
 
 def entrypoint():

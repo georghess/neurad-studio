@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +30,7 @@ from typing_extensions import assert_never
 
 from nerfstudio.cameras.camera_optimizers import CameraOptimizer
 from nerfstudio.cameras.cameras import CameraType
+from nerfstudio.cameras.lidars import intensity_to_rgb, transform_points
 from nerfstudio.configs import base_config as cfg
 from nerfstudio.data.datasets.base_dataset import InputDataset
 from nerfstudio.models.base_model import Model
@@ -39,7 +41,7 @@ from nerfstudio.utils.writer import GLOBAL_BUFFER, EventName
 from nerfstudio.viewer.control_panel import ControlPanel
 from nerfstudio.viewer.export_panel import populate_export_tab
 from nerfstudio.viewer.render_panel import populate_render_tab
-from nerfstudio.viewer.render_state_machine import RenderAction, RenderStateMachine
+from nerfstudio.viewer.render_state_machine import LidarRenderer, RenderAction, RenderStateMachine
 from nerfstudio.viewer.utils import CameraState, parse_object
 from nerfstudio.viewer.viewer_elements import ViewerControl, ViewerElement
 from nerfstudio.viewer_legacy.server import viewer_utils
@@ -48,7 +50,7 @@ if TYPE_CHECKING:
     from nerfstudio.engine.trainer import Trainer
 
 
-VISER_NERFSTUDIO_SCALE_RATIO: float = 10.0
+VISER_NERFSTUDIO_SCALE_RATIO: float = 1.0
 
 
 @decorate_all([check_main_thread])
@@ -156,6 +158,7 @@ class Viewer:
         )
 
         self.render_statemachines: Dict[int, RenderStateMachine] = {}
+        self.lidar_renderers: Dict[int, LidarRenderer] = {}
         self.viser_server.on_client_disconnect(self.handle_disconnect)
         self.viser_server.on_client_connect(self.handle_new_client)
 
@@ -183,6 +186,18 @@ class Viewer:
         self.show_images.on_click(lambda _: self.set_camera_visibility(True))
         self.show_images.on_click(lambda _: self.toggle_cameravis_button())
         self.show_images.visible = False
+        # Add buttons to toggle training point cloud visibility
+        self.hide_lidars = self.viser_server.add_gui_button(
+            label="Hide Train Lidars", disabled=False, icon=viser.Icon.EYE_OFF, color=None, visible=False
+        )
+        self.hide_lidars.on_click(lambda _: self.set_lidar_visibility(False))
+        self.hide_lidars.on_click(lambda _: self.toggle_lidarvis_button())
+        self.show_lidars = self.viser_server.add_gui_button(
+            label="Show Train Lidars", disabled=False, icon=viser.Icon.EYE, color=None, visible=False
+        )
+        self.show_lidars.on_click(lambda _: self.set_lidar_visibility(True))
+        self.show_lidars.on_click(lambda _: self.toggle_lidarvis_button())
+
         mkdown = self.make_stats_markdown(0, "0x0px")
         self.stats_markdown = self.viser_server.add_gui_markdown(mkdown)
         tabs = self.viser_server.add_gui_tab_group()
@@ -195,6 +210,9 @@ class Viewer:
                 self._trigger_rerender,
                 self._output_type_change,
                 self._output_split_type_change,
+                self._rerender_lidar,
+                self._rendering_disabled_change,
+                max_time=self.pipeline.datamanager.train_dataparser_outputs.metadata.get("duration", 1.0),
                 default_composite_depth=self.config.default_composite_depth,
             )
         config_path = self.log_filename.parents[0] / "config.yml"
@@ -278,6 +296,10 @@ class Viewer:
         self.hide_images.visible = not self.hide_images.visible
         self.show_images.visible = not self.show_images.visible
 
+    def toggle_lidarvis_button(self) -> None:
+        self.hide_lidars.visible = not self.hide_lidars.visible
+        self.show_lidars.visible = not self.show_lidars.visible
+
     def make_stats_markdown(self, step: Optional[int], res: Optional[str]) -> str:
         # if either are None, read it from the current stats_markdown content
         if step is None:
@@ -326,10 +348,14 @@ class Viewer:
     def handle_disconnect(self, client: viser.ClientHandle) -> None:
         self.render_statemachines[client.client_id].running = False
         self.render_statemachines.pop(client.client_id)
+        self.lidar_renderers[client.client_id].running = False
+        self.lidar_renderers.pop(client.client_id)
 
     def handle_new_client(self, client: viser.ClientHandle) -> None:
         self.render_statemachines[client.client_id] = RenderStateMachine(self, VISER_NERFSTUDIO_SCALE_RATIO, client)
         self.render_statemachines[client.client_id].start()
+        self.lidar_renderers[client.client_id] = LidarRenderer(self, client)
+        self.lidar_renderers[client.client_id].start()
 
         @client.camera.on_update
         def _(_: viser.CameraHandle) -> None:
@@ -345,6 +371,12 @@ class Viewer:
         with self.viser_server.atomic():
             for idx in self.camera_handles:
                 self.camera_handles[idx].visible = visible
+
+    def set_lidar_visibility(self, visible: bool) -> None:
+        """Toggle the visibility of the training cameras."""
+        with self.viser_server.atomic():
+            for handle in self.lidar_handles.values():
+                handle.visible = visible
 
     def update_camera_poses(self):
         # TODO this fn accounts for like ~5% of total train time
@@ -378,6 +410,32 @@ class Viewer:
         for id in clients:
             camera_state = self.get_camera_state(clients[id])
             self.render_statemachines[id].action(RenderAction("move", camera_state))
+
+    def _rerender_lidar(self, *args, snap_to_cam: bool = False) -> None:
+        """Handle lidar update message from viewer."""
+        for client_id, client in self.viser_server.get_clients().items():
+            if snap_to_cam:
+                # TODO: this will propagate to all clients, needs to be client-specific somehow!
+                camera_state = self.get_camera_state(client=client)
+                self.control_panel.lidar_position = camera_state.c2w[:3, 3].tolist()
+
+            if self.control_panel.lidar_enabled:
+                self.lidar_renderers[client_id].trigger()
+            else:  # clear the lidar point cloud
+                handle = self.lidar_renderers[client_id].rendered_pc_handle
+                if handle is not None:
+                    handle.remove()
+
+    def _rendering_disabled_change(self, _):
+        clients = self.viser_server.get_clients()
+        for id in clients:
+            self.render_statemachines[id].disabled = self.control_panel.rendering_disabled
+            if self.render_statemachines[id].disabled:
+                bg_img = (
+                    np.ones((10, 10, 3), dtype=np.uint8) * np.array(self.control_panel.color_override)[None, None, :]
+                )
+                self.viser_server.set_background_image(bg_img)
+                self.render_statemachines[id].interrupt_render_flag = True
 
     def _toggle_training_state(self, _) -> None:
         """Toggle the trainer's training state."""
@@ -458,6 +516,27 @@ class Viewer:
 
             self.camera_handles[idx] = camera_handle
             self.original_c2w[idx] = c2w
+
+        # draw the lidar point clouds (if any)
+        self.lidar_handles: Dict[int, viser.PointCloudHandle] = {}
+        lidars = train_dataset.metadata.get("lidars", None) if train_dataset.metadata else None
+        if lidars is not None:
+            point_clouds = train_dataset.metadata["point_clouds"]
+            for idx in range(len(lidars)):
+                point_cloud = point_clouds[idx]
+                point_cloud = transform_points(point_cloud, lidars.lidar_to_worlds[idx])
+                max_points = self.config.max_points_per_cloud
+                if max_points is not None and point_cloud.shape[0] > max_points:
+                    point_cloud = point_cloud[torch.randperm(point_cloud.shape[0])[:max_points]]
+                self.lidar_handles[idx] = self.viser_server.add_point_cloud(
+                    f"/lidar/{idx:06d}",
+                    points=point_cloud[:, :3].cpu().numpy(),
+                    colors=intensity_to_rgb(point_cloud[:, 3].cpu().numpy()),
+                    point_size=0.02,
+                    point_shape="circle",
+                )
+        if self.lidar_handles:
+            self.hide_lidars.visible = True  # only show lidar buttons if there are lidars
 
         self.train_state = train_state
         self.train_util = 0.9

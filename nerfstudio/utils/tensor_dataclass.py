@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +17,7 @@
 
 import dataclasses
 from copy import deepcopy
-from typing import Callable, Dict, List, NoReturn, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Iterable, List, NoReturn, Optional, Tuple, TypeVar, Union
 
 import numpy as np
 import torch
@@ -253,7 +254,7 @@ class TensorDataclass:
             lambda x: x.broadcast_to((*shape, x.shape[-1])), custom_tensor_dims_fn=custom_tensor_dims_fn
         )
 
-    def to(self: TensorDataclassT, device) -> TensorDataclassT:
+    def to(self: TensorDataclassT, device, **kwargs) -> TensorDataclassT:
         """Returns a new TensorDataclass with the same data but on the specified device.
 
         Args:
@@ -262,7 +263,30 @@ class TensorDataclass:
         Returns:
             A new TensorDataclass with the same data but on the specified device.
         """
-        return self._apply_fn_to_fields(lambda x: x.to(device))
+        return self._apply_fn_to_fields(lambda x: x.to(device, **kwargs))
+
+    def cat(
+        self: TensorDataclassT, tensors: List[TensorDataclassT], dim: int = 0, ignore_fields: Iterable = set()
+    ) -> TensorDataclassT:
+        """Concatenates the tensor dataclass with the tensors along the specified dimension.
+
+        Args:
+            tensors: The tensors to concatenate with the tensor dataclass.
+            dim: The dimension to concatenate along.
+
+        Returns:
+            A new TensorDataclass with the tensors concatenated along the specified dimension.
+        """
+        if not isinstance(tensors, (list, tuple)):
+            tensors = [tensors]
+        assert all(type(t) == type(self) for t in tensors), "All tensors must be of the same type."
+        assert dataclasses.is_dataclass(self)
+        new_fields = {
+            field.name: _cat(getattr(self, field.name), [getattr(t, field.name) for t in tensors], dim)
+            for field in dataclasses.fields(self)
+            if field.name not in ignore_fields
+        }
+        return self.__class__(**new_fields)
 
     def pin_memory(self: TensorDataclassT) -> TensorDataclassT:
         """Pins the tensor dataclass memory
@@ -344,7 +368,24 @@ class TensorDataclass:
                     new_dict[f] = fn(v)
                 elif isinstance(v, Dict):
                     new_dict[f] = self._apply_fn_to_dict(v, fn, dataclass_fn)
+                elif isinstance(v, (list, tuple)):
+                    new_dict[f] = [fn(vi) for vi in v]
                 else:
                     new_dict[f] = deepcopy(v)
 
         return new_dict
+
+
+def _cat(x: Any, y: List[Any], dim: int):
+    if isinstance(x, TensorDataclass):
+        return x.cat(y, dim=dim)
+    elif isinstance(x, torch.Tensor):
+        return torch.cat([x, *y], dim=dim)
+    elif isinstance(x, Dict):
+        # TODO: maybe handle key mismatch better. Currently only merges keys that are in all dicts
+        return {k: _cat(v, [yi[k] for yi in y], dim) for k, v in x.items()}
+    elif isinstance(x, (list, tuple)):
+        return [_cat(xi, [yi[i] for yi in y], dim) for i, xi in enumerate(x)]
+    else:
+        # If we can't concatenate, we return the value of x
+        return deepcopy(x)

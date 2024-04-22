@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -318,7 +319,7 @@ class WandbWriter(Writer):
         import wandb  # wandb is slow to import, so we only import it if we need it.
 
         image = torch.permute(image, (2, 0, 1))
-        wandb.log({name: wandb.Image(image)}, step=step)
+        wandb.log({name: wandb.Image(image, file_type="jpg")}, step=step)
 
     def write_scalar(self, name: str, scalar: Union[float, torch.Tensor], step: int) -> None:
         import wandb  # wandb is slow to import, so we only import it if we need it.

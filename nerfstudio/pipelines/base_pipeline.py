@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +16,7 @@
 """
 Abstracts for the Pipeline class.
 """
+
 from __future__ import annotations
 
 import typing
@@ -32,6 +34,7 @@ from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn import Parameter
 from torch.nn.parallel import DistributedDataParallel as DDP
 
+from nerfstudio.cameras.lidars import transform_points
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.data.datamanagers.base_datamanager import DataManager, DataManagerConfig, VanillaDataManager
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanager
@@ -185,7 +188,7 @@ class Pipeline(nn.Module):
             get_std: Set True if you want to return std with the mean metric.
         """
 
-    def load_pipeline(self, loaded_state: Dict[str, Any], step: int) -> None:
+    def load_pipeline(self, loaded_state: Dict[str, Any], step: int, strict: bool) -> None:
         """Load the checkpoint from the given path
 
         Args:
@@ -263,13 +266,34 @@ class VanillaPipeline(Pipeline):
             pts = self.datamanager.train_dataparser_outputs.metadata["points3D_xyz"]
             pts_rgb = self.datamanager.train_dataparser_outputs.metadata["points3D_rgb"]
             seed_pts = (pts, pts_rgb)
+        elif (
+            hasattr(self.datamanager, "train_dataparser_outputs")
+            and "point_clouds" in self.datamanager.train_dataparser_outputs.metadata
+            and "lidars" in self.datamanager.train_dataparser_outputs.metadata
+        ):
+            points_in_world = []
+            for l2w, pc in zip(
+                self.datamanager.train_dataparser_outputs.metadata["lidars"].lidar_to_worlds,
+                self.datamanager.train_dataparser_outputs.metadata["point_clouds"],
+            ):
+                points_in_world.append(transform_points(pc[:, :3], l2w))
+            points_in_world = torch.cat([pc[:, :3] for pc in points_in_world], dim=0)
+            if (
+                "point_clouds_rgb" in self.datamanager.train_dataparser_outputs.metadata
+                and self.datamanager.train_dataparser_outputs.metadata["point_clouds_rgb"] is not None
+            ):
+                points_in_world_rgb = torch.cat(self.datamanager.train_dataparser_outputs.metadata["point_clouds_rgb"])
+            else:
+                points_in_world_rgb = torch.rand_like(points_in_world) * 255
+            seed_pts = (points_in_world, points_in_world_rgb)
+
         self.datamanager.to(device)
         # TODO(ethan): get rid of scene_bounds from the model
         assert self.datamanager.train_dataset is not None, "Missing input dataset"
 
         self._model = config.model.setup(
             scene_box=self.datamanager.train_dataset.scene_box,
-            num_train_data=len(self.datamanager.train_dataset),
+            num_train_data=self.datamanager.get_num_train_data(),
             metadata=self.datamanager.train_dataset.metadata,
             device=device,
             grad_scaler=grad_scaler,
@@ -402,7 +426,7 @@ class VanillaPipeline(Pipeline):
         self.train()
         return metrics_dict
 
-    def load_pipeline(self, loaded_state: Dict[str, Any], step: int) -> None:
+    def load_pipeline(self, loaded_state: Dict[str, Any], step: int, strict: bool = True) -> None:
         """Load the checkpoint from the given path
 
         Args:
@@ -413,7 +437,7 @@ class VanillaPipeline(Pipeline):
             (key[len("module.") :] if key.startswith("module.") else key): value for key, value in loaded_state.items()
         }
         self.model.update_to_step(step)
-        self.load_state_dict(state)
+        self.load_state_dict(state, strict=strict)
 
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes

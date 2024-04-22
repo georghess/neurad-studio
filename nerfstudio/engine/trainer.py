@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +16,7 @@
 """
 Code to train model.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -33,7 +35,10 @@ from rich.panel import Panel
 from rich.table import Table
 from torch.cuda.amp.grad_scaler import GradScaler
 
+from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.configs.experiment_config import ExperimentConfig
+from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
+from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
 from nerfstudio.engine.optimizers import Optimizers
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline
@@ -47,6 +52,53 @@ from nerfstudio.viewer_legacy.server.viewer_state import ViewerLegacyState
 
 TRAIN_INTERATION_OUTPUT = Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, torch.Tensor]]
 TORCH_DEVICE = str
+
+
+@dataclass
+class MetricTrackerConfig(InstantiateConfig):
+    """Configuration for the metric tracker, used for early stopping and checkpoint saving."""
+
+    _target: Type = field(default_factory=lambda: MetricTracker)
+    """target class to instantiate"""
+    metric: Optional[str] = "psnr"
+    """The metric to track for early stopping and checkpoint saving."""
+    higher_is_better: bool = True
+    """Whether a higher value of the metric is better."""
+    margin: float = 0.0
+    """Margin for comparison (0.1 = 10%)"""
+
+
+class MetricTracker:
+    """Class to track a metric to detect degradation."""
+
+    def __init__(self, config: MetricTrackerConfig) -> None:
+        self.config = config
+        self.best, self.latest = None, None
+
+    def did_degrade(self, fallback: bool = False) -> bool:
+        if (self.latest is None) or (self.best is None):
+            return fallback  # we can't tell
+        # apply margin to the best value (to be robust to noise in the metric)
+        best = self.best * (1 + (-self.config.margin if self.config.higher_is_better else self.config.margin))
+        return not self._is_new_better(best, self.latest)
+
+    def reset_latest(self) -> None:
+        self.latest = None
+
+    def update(self, metrics: Dict[str, float]) -> None:
+        self.latest = metrics.get(self.config.metric, None) if self.config.metric else None
+        if isinstance(self.latest, torch.Tensor):
+            self.latest = self.latest.item()
+        if self.latest is None:
+            return
+        if self.best is None:
+            self.best = self.latest
+        elif self._is_new_better(self.best, self.latest):
+            self.best = self.latest
+
+    def _is_new_better(self, old: float, new: float) -> bool:
+        """Check if new is better than old."""
+        return new >= old if self.config.higher_is_better else new <= old
 
 
 @dataclass
@@ -71,6 +123,10 @@ class TrainerConfig(ExperimentConfig):
     """Use gradient scaler even if the automatic mixed precision is disabled."""
     save_only_latest_checkpoint: bool = True
     """Whether to only save the latest checkpoint or all checkpoints."""
+    checkpoint_saving_tracker: MetricTrackerConfig = field(default_factory=lambda: MetricTrackerConfig(margin=0.05))
+    """Configuration for the metric tracker."""
+    early_stopping_tracker: MetricTrackerConfig = field(default_factory=lambda: MetricTrackerConfig(margin=0.1))
+    """Configuration for the metric tracker."""
     # optional parameters if we want to resume training
     load_dir: Optional[Path] = None
     """Optionally specify a pre-trained model directory to load from."""
@@ -80,6 +136,8 @@ class TrainerConfig(ExperimentConfig):
     """Path to config YAML file."""
     load_checkpoint: Optional[Path] = None
     """Path to checkpoint file."""
+    training_start_step: Optional[int] = None
+    """Optionally specify the starting step for training. Useful to load checkpoint but start from a different step."""
     log_gradients: bool = False
     """Optionally log gradients during training"""
     gradient_accumulation_steps: Dict[str, int] = field(default_factory=lambda: {})
@@ -134,6 +192,9 @@ class Trainer:
         # directory to save checkpoints
         self.checkpoint_dir: Path = config.get_checkpoint_dir()
         CONSOLE.log(f"Saving checkpoints to: {self.checkpoint_dir}")
+
+        self.checkpoint_saving_tracker = self.config.checkpoint_saving_tracker.setup()
+        self.early_stopping_tracker = self.config.early_stopping_tracker.setup()
 
         self.viewer_state = None
 
@@ -225,9 +286,11 @@ class Trainer:
         """Train the model."""
         assert self.pipeline.datamanager.train_dataset is not None, "Missing DatsetInputs"
 
-        self.pipeline.datamanager.train_dataparser_outputs.save_dataparser_transform(
-            self.base_dir / "dataparser_transforms.json"
-        )
+        # don't want to call save_dataparser_transform if pipeline's datamanager does not have a dataparser
+        if isinstance(self.pipeline.datamanager, (VanillaDataManager, ParallelDataManager)):
+            self.pipeline.datamanager.train_dataparser_outputs.save_dataparser_transform(
+                self.base_dir / "dataparser_transforms.json"
+            )
 
         self._init_viewer_state()
         with TimeWriter(writer, EventName.TOTAL_TRAIN_TIME):
@@ -284,7 +347,12 @@ class Trainer:
 
                 # Do not perform evaluation if there are no validation images
                 if self.pipeline.datamanager.eval_dataset:
-                    self.eval_iteration(step)
+                    with self.train_lock:  # avoid race conditions with eval
+                        self.eval_iteration(step)
+
+                if self.early_stopping_tracker.did_degrade():
+                    print("Early stopping due to degradation")
+                    break
 
                 if step_check(step, self.config.steps_per_save):
                     self.save_checkpoint(step)
@@ -332,7 +400,7 @@ class Trainer:
     @check_viewer_enabled
     def _init_viewer_state(self) -> None:
         """Initializes viewer scene with given train dataset"""
-        assert self.viewer_state and self.pipeline.datamanager.train_dataset
+        assert self.viewer_state and self.pipeline.datamanager.train_dataset is not None
         self.viewer_state.init_scene(
             train_dataset=self.pipeline.datamanager.train_dataset,
             train_state="training",
@@ -399,10 +467,14 @@ class Trainer:
             load_path: Path = load_dir / f"step-{load_step:09d}.ckpt"
             assert load_path.exists(), f"Checkpoint {load_path} does not exist"
             loaded_state = torch.load(load_path, map_location="cpu")
+            loaded_state["step"] = (
+                self.config.training_start_step if self.config.training_start_step is not None else loaded_state["step"]
+            )
             self._start_step = loaded_state["step"] + 1
             # load the checkpoints for pipeline, optimizers, and gradient scalar
             self.pipeline.load_pipeline(loaded_state["pipeline"], loaded_state["step"])
-            self.optimizers.load_optimizers(loaded_state["optimizers"])
+            if self.config.load_optimizer:
+                self.optimizers.load_optimizers(loaded_state["optimizers"])
             if "schedulers" in loaded_state and self.config.load_scheduler:
                 self.optimizers.load_schedulers(loaded_state["schedulers"])
             self.grad_scaler.load_state_dict(loaded_state["scalers"])
@@ -410,10 +482,14 @@ class Trainer:
         elif load_checkpoint is not None:
             assert load_checkpoint.exists(), f"Checkpoint {load_checkpoint} does not exist"
             loaded_state = torch.load(load_checkpoint, map_location="cpu")
+            loaded_state["step"] = (
+                self.config.training_start_step if self.config.training_start_step is not None else loaded_state["step"]
+            )
             self._start_step = loaded_state["step"] + 1
             # load the checkpoints for pipeline, optimizers, and gradient scalar
             self.pipeline.load_pipeline(loaded_state["pipeline"], loaded_state["step"])
-            self.optimizers.load_optimizers(loaded_state["optimizers"])
+            if self.config.load_optimizer:
+                self.optimizers.load_optimizers(loaded_state["optimizers"])
             if "schedulers" in loaded_state and self.config.load_scheduler:
                 self.optimizers.load_schedulers(loaded_state["schedulers"])
             self.grad_scaler.load_state_dict(loaded_state["scalers"])
@@ -431,14 +507,19 @@ class Trainer:
         # possibly make the checkpoint directory
         if not self.checkpoint_dir.exists():
             self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        if self.checkpoint_saving_tracker.did_degrade(fallback=True):
+            return
+        self.checkpoint_saving_tracker.reset_latest()  # we only want to save the best once
         # save the checkpoint
         ckpt_path: Path = self.checkpoint_dir / f"step-{step:09d}.ckpt"
         torch.save(
             {
                 "step": step,
-                "pipeline": self.pipeline.module.state_dict()  # type: ignore
-                if hasattr(self.pipeline, "module")
-                else self.pipeline.state_dict(),
+                "pipeline": (
+                    self.pipeline.module.state_dict()  # type: ignore
+                    if hasattr(self.pipeline, "module")
+                    else self.pipeline.state_dict()
+                ),
                 "optimizers": {k: v.state_dict() for (k, v) in self.optimizers.optimizers.items()},
                 "schedulers": {k: v.state_dict() for (k, v) in self.optimizers.schedulers.items()},
                 "scalers": self.grad_scaler.state_dict(),
@@ -500,6 +581,7 @@ class Trainer:
 
     @check_eval_enabled
     @profiler.time_function
+    @torch.no_grad()
     def eval_iteration(self, step: int) -> None:
         """Run one iteration with different batch/image/all image evaluations depending on step size.
 
@@ -509,6 +591,8 @@ class Trainer:
         # a batch of eval rays
         if step_check(step, self.config.steps_per_eval_batch):
             _, eval_loss_dict, eval_metrics_dict = self.pipeline.get_eval_loss_dict(step=step)
+            eval_loss_dict = detach_items_if_tensor(eval_loss_dict)
+            eval_metrics_dict = detach_items_if_tensor(eval_metrics_dict)
             eval_loss = functools.reduce(torch.add, eval_loss_dict.values())
             writer.put_scalar(name="Eval Loss", scalar=eval_loss, step=step)
             writer.put_dict(name="Eval Loss Dict", scalar_dict=eval_loss_dict, step=step)
@@ -524,7 +608,7 @@ class Trainer:
                 step=step,
                 avg_over_steps=True,
             )
-            writer.put_dict(name="Eval Images Metrics", scalar_dict=metrics_dict, step=step)
+            writer.put_dict(name="Eval Images Metrics", scalar_dict=detach_items_if_tensor(metrics_dict), step=step)
             group = "Eval Images"
             for image_name, image in images_dict.items():
                 writer.put_image(name=group + "/" + image_name, image=image, step=step)
@@ -532,4 +616,15 @@ class Trainer:
         # all eval images
         if step_check(step, self.config.steps_per_eval_all_images):
             metrics_dict = self.pipeline.get_average_eval_image_metrics(step=step)
-            writer.put_dict(name="Eval Images Metrics Dict (all images)", scalar_dict=metrics_dict, step=step)
+            self.early_stopping_tracker.update(metrics_dict)
+            self.checkpoint_saving_tracker.update(metrics_dict)
+            writer.put_dict(
+                name="Eval Images Metrics Dict (all images)",
+                scalar_dict=detach_items_if_tensor(metrics_dict),
+                step=step,
+            )
+
+
+def detach_items_if_tensor(dict):
+    """Detach items in dictionary if they are tensors"""
+    return {k: v.detach() if isinstance(v, torch.Tensor) else v for k, v in dict.items()}

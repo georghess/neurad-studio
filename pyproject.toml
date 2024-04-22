@@ -57,7 +57,7 @@ dependencies = [
     "torchvision>=0.14.1",
     "torchmetrics[image]>=1.0.1",
     "typing_extensions>=4.4.0",
-    "viser==0.1.27",
+    "viser@git+https://github.com/atonderski/viser.git",
     "nuscenes-devkit>=1.1.1",
     "wandb>=0.13.3",
     "xatlas",
@@ -66,7 +66,10 @@ dependencies = [
     "gsplat>=0.1.9",
     "pytorch-msssim",
     "pathos",
-    "packaging"
+    "packaging",
+    "zod>=0.1.7",
+    "pandaset@git+https://github.com/scaleapi/pandaset-devkit.git#egg=pandaset&subdirectory=python",
+    "av2==0.2.1",
 ]
 
 [project.urls]

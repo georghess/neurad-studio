@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -177,12 +178,12 @@ def torch_compile(*args, **kwargs) -> Any:
             return args[0]
         else:
             return torch.jit.script
-    elif platform.system() == "Windows":
+    elif (os_name := platform.system()) in ("Windows", "Darwin"):
         # torch.compile is not supported on Windows
         # https://github.com/orgs/pytorch/projects/27
         # TODO: @jkulhanek, remove this once torch.compile is supported on Windows
         warnings.warn(
-            "Windows does not yet support torch.compile and the performance will be affected.", RuntimeWarning
+            f"{os_name} does not yet support torch.compile and the performance will be affected.", RuntimeWarning
         )
         if args and isinstance(args[0], torch.nn.Module):
             return args[0]

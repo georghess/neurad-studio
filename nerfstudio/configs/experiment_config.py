@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +76,8 @@ class ExperimentConfig(InstantiateConfig):
     """Relative path to save all checkpoints."""
     load_scheduler: bool = True
     """Whether to load the scheduler state_dict to resume training, if it exists."""
+    load_optimizer: bool = True
+    """Whether to load the optimizer state_dict to resume training, if it exists."""
 
     def is_viewer_legacy_enabled(self) -> bool:
         """Checks if the legacy viewer is enabled."""

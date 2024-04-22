@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,171 +43,20 @@ class ExternalMethod:
 
 external_methods = []
 
-# Instruct-NeRF2NeRF
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]Instruct-NeRF2NeRF[/bold yellow]
-For more information visit: https://docs.nerf.studio/nerfology/methods/in2n.html
+# TODO: add UniSim
+# external_methods.append(
+#     ExternalMethod(
+#         """[bold yellow]UniSim[/bold yellow]
 
-To enable Instruct-NeRF2NeRF, you must install it first by running:
-  [grey]pip install git+https://github.com/ayaanzhaque/instruct-nerf2nerf[/grey]""",
-        configurations=[
-            ("in2n", "Instruct-NeRF2NeRF. Full model, used in paper"),
-            ("in2n-small", "Instruct-NeRF2NeRF. Half precision model"),
-            ("in2n-tiny", "Instruct-NeRF2NeRF. Half prevision with no LPIPS"),
-        ],
-        pip_package="git+https://github.com/ayaanzhaque/instruct-nerf2nerf",
-    )
-)
-
-# K-Planes
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]K-Planes[/bold yellow]
-For more information visit https://docs.nerf.studio/nerfology/methods/kplanes.html
-
-To enable K-Planes, you must install it first by running:
-  [grey]pip install kplanes-nerfstudio[/grey]""",
-        configurations=[
-            ("kplanes", "K-Planes model tuned to static blender scenes"),
-            ("kplanes-dynamic", "K-Planes model tuned to dynamic DNeRF scenes"),
-        ],
-        pip_package="kplanes-nerfstudio",
-    )
-)
-
-# LERF
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]LERF[/bold yellow]
-For more information visit: https://docs.nerf.studio/nerfology/methods/lerf.html
-
-To enable LERF, you must install it first by running:
-  [grey]pip install git+https://github.com/kerrj/lerf[/grey]""",
-        configurations=[
-            ("lerf-big", "LERF with OpenCLIP ViT-L/14"),
-            ("lerf", "LERF with OpenCLIP ViT-B/16, used in paper"),
-            ("lerf-lite", "LERF with smaller network and less LERF samples"),
-        ],
-        pip_package="git+https://github.com/kerrj/lerf",
-    )
-)
-
-# Tetra-NeRF
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]Tetra-NeRF[/bold yellow]
-For more information visit: https://docs.nerf.studio/nerfology/methods/tetranerf.html
-
-To enable Tetra-NeRF, you must install it first. Please follow the instructions here:
-  https://github.com/jkulhanek/tetra-nerf/blob/master/README.md#installation""",
-        configurations=[
-            ("tetra-nerf-original", "Tetra-NeRF. Official implementation from the paper"),
-            ("tetra-nerf", "Tetra-NeRF. Different sampler - faster and better"),
-        ],
-    )
-)
-
-# NeRFPlayer
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]NeRFPlayer[/bold yellow]
-For more information visit: https://docs.nerf.studio/nerfology/methods/nerfplayer.html
-
-To enable NeRFPlayer, you must install it first by running:
-  [grey]pip install git+https://github.com/lsongx/nerfplayer-nerfstudio[/grey]""",
-        configurations=[
-            ("nerfplayer-nerfacto", "NeRFPlayer with nerfacto backbone"),
-            ("nerfplayer-ngp", "NeRFPlayer with instang-ngp-bounded backbone"),
-        ],
-    )
-)
-
-# Volinga
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]Volinga[/bold yellow]
-For more information visit: https://docs.nerf.studio/extensions/unreal_engine.html
-
-To enable Volinga, you must install it first by running:
-  [grey]pip install git+https://github.com/Volinga/volinga-model[/grey]""",
-        configurations=[
-            (
-                "volinga",
-                "Real-time rendering model from Volinga. Directly exportable to NVOL format at https://volinga.ai/",
-            ),
-        ],
-        pip_package="git+https://github.com/Volinga/volinga-model",
-    )
-)
-
-# Instruct-GS2GS
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]Instruct-GS2GS[/bold yellow]
-For more information visit: https://docs.nerf.studio/nerfology/methods/igs2gs.html
-
-To enable Instruct-GS2GS, you must install it first by running:
-  [grey]pip install git+https://github.com/cvachha/instruct-gs2gs[/grey]""",
-        configurations=[("igs2gs", "Instruct-GS2GS. Full model, used in paper")],
-        pip_package="git+https://github.com/cvachha/instruct-gs2gs",
-    )
-)
-
-# PyNeRF
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]PyNeRF[/bold yellow]
-For more information visit https://docs.nerf.studio/nerfology/methods/pynerf.html
-
-To enable PyNeRF, you must install it first by running:
-  [grey]pip install git+https://github.com/hturki/pynerf[/grey]""",
-        configurations=[
-            ("pynerf", "PyNeRF with proposal network. The default parameters are suited for outdoor scenes."),
-            (
-                "pynerf-synthetic",
-                "PyNeRF with proposal network. The default parameters are suited for synthetic scenes.",
-            ),
-            (
-                "pynerf-occupancy-grid",
-                "PyNeRF with occupancy grid. The default parameters are suited for synthetic scenes.",
-            ),
-        ],
-        pip_package="git+https://github.com/hturki/pynerf",
-    )
-)
-
-# SeaThru-NeRF
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]Seathru-NeRF[/bold yellow]
-For more information visit https://docs.nerf.studio/nerfology/methods/seathru_nerf.html
-
-To enable Seathru-NeRF, you must install it first by running:
-  [grey]pip install git+https://github.com/AkerBP/seathru_nerf[/grey]""",
-        configurations=[
-            ("seathru-nerf", "SeaThru-NeRF for underwater scenes."),
-            ("seathru-nerf-lite", "SeaThru-NeRF for underwater scenes (smaller networks and batches)."),
-        ],
-        pip_package="git+https://github.com/AkerBP/seathru_nerf",
-    )
-)
-
-# Zip-NeRF
-external_methods.append(
-    ExternalMethod(
-        """[bold yellow]Zip-NeRF[/bold yellow]
-For more information visit https://docs.nerf.studio/nerfology/methods/zipnerf.html
-
-To enable Zip-NeRF, you must install it first by running:
-  [grey]pip install git+https://github.com/SuLvXiangXin/zipnerf-pytorch#subdirectory=extensions/cuda 
-  and pip install git+https://github.com/SuLvXiangXin/zipnerf-pytorch[/grey]""",
-        configurations=[
-            ("zipnerf", "A pytorch implementation of 'Zip-NeRF: Anti-Aliased Grid-Based Neural Radiance Fields'")
-        ],
-        pip_package="pip install git+https://github.com/SuLvXiangXin/zipnerf-pytorch",
-    )
-)
+# To enable UniSim, you must install it first by running:
+#   [grey]pip install git+https://github.com/.../UniSim[/grey]""",
+#         configurations=[
+#             ("unisim", "UniSim reproduction, as specified in the paper"),
+#             ("unisim-tweaked", "UniSim with tweaked hyperparameters"),
+#         ],
+#         pip_package="git+https://github.com/.../unisim",
+#     )
+# )
 
 
 @dataclass

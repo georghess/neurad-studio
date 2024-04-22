@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -677,6 +678,41 @@ class ViewerRGB(ViewerParameter[Tuple[int, int, int]]):
         )
 
 
+class ViewerVec2(ViewerParameter[Tuple[float, float]]):
+    """
+    2 number boxes in a row to input a vector
+
+    Args:
+        name: The name of the vector
+        default_value: The default value of the vector
+        step: The step of the vector
+        disabled: If the vector is disabled
+        visible: If the vector is visible
+        cb_hook: Callback to call on update
+        hint: The hint text
+    """
+
+    def __init__(
+        self,
+        name,
+        default_value: Tuple[float, float],
+        step=0.1,
+        disabled=False,
+        visible=True,
+        cb_hook: Callable[[ViewerVec2], Any] = lambda element: None,
+        hint: Optional[str] = None,
+    ):
+        assert len(default_value) == 2
+        super().__init__(name, default_value, disabled=disabled, visible=visible, cb_hook=cb_hook)
+        self.step = step
+        self.hint = hint
+
+    def _create_gui_handle(self, viser_server: ViserServer) -> None:
+        self.gui_handle = viser_server.add_gui_vector2(
+            self.name, self.default_value, step=self.step, disabled=self.disabled, visible=self.visible, hint=self.hint
+        )
+
+
 class ViewerVec3(ViewerParameter[Tuple[float, float, float]]):
     """
     3 number boxes in a row to input a vector
@@ -708,5 +744,39 @@ class ViewerVec3(ViewerParameter[Tuple[float, float, float]]):
 
     def _create_gui_handle(self, viser_server: ViserServer) -> None:
         self.gui_handle = viser_server.add_gui_vector3(
+            self.name, self.default_value, step=self.step, disabled=self.disabled, visible=self.visible, hint=self.hint
+        )
+
+
+class ViewerVecN(ViewerParameter[Tuple[float, ...]]):
+    """
+    N number boxes in a row to input a vector
+
+    Args:
+        name: The name of the vector
+        default_value: The default value of the vector
+        step: The step of the vector
+        disabled: If the vector is disabled
+        visible: If the vector is visible
+        cb_hook: Callback to call on update
+        hint: The hint text
+    """
+
+    def __init__(
+        self,
+        name,
+        default_value: Tuple[float, ...],
+        step=0.1,
+        disabled=False,
+        visible=True,
+        cb_hook: Callable[[ViewerVecN], Any] = lambda element: None,
+        hint: Optional[str] = None,
+    ):
+        super().__init__(name, default_value, disabled=disabled, visible=visible, cb_hook=cb_hook)
+        self.step = step
+        self.hint = hint
+
+    def _create_gui_handle(self, viser_server: ViserServer) -> None:
+        self.gui_handle = viser_server.add_gui_vectorN(
             self.name, self.default_value, step=self.step, disabled=self.disabled, visible=self.visible, hint=self.hint
         )

@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +42,10 @@ class ColormapOptions:
     """ Maximum value for the output colormap """
     invert: bool = False
     """ Whether to invert the output colormap """
+    range_min: Optional[float] = None
+    """ Minimum value for the input tensor image """
+    range_max: Optional[float] = None
+    """ Maximum value for the input tensor image """
 
 
 def apply_colormap(
@@ -65,6 +70,11 @@ def apply_colormap(
     # default for rgb images
     if image.shape[-1] == 3:
         return image
+
+    # clip to range
+    min_range = colormap_options.range_min if colormap_options.range_min is not None else torch.min(image)
+    max_range = colormap_options.range_max if colormap_options.range_max is not None else torch.max(image)
+    image = torch.clip(image, min_range, max_range)
 
     # rendering depth outputs
     if image.shape[-1] == 1 and torch.is_floating_point(image):

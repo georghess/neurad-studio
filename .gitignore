@@ -165,6 +165,9 @@ cython_debug/
 outputs/
 exports/
 renders/
+*.mp4
+*.gif
+*.zip
 # tensorboard log files
 events.out.*
 
@@ -173,7 +176,8 @@ events.out.*
 
 # Misc
 old/
-temp*
+temp/
+tmp/
 !temporal*
 .nfs*
 external/
@@ -187,4 +191,5 @@ camera_paths/
 ._.DS_Store
 */**/.DS_Store
 */**/._.DS_Store
-
+masks/
+*.sif

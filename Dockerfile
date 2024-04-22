@@ -1,6 +1,5 @@
 ARG CUDA_VERSION=11.8.0
 ARG OS_VERSION=22.04
-ARG USER_ID=1000
 # Define base image.
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${OS_VERSION}
 ARG CUDA_VERSION
@@ -15,8 +14,8 @@ LABEL org.opencontainers.image.base.name="docker.io/library/nvidia/cuda:${CUDA_V
 
 # Variables used at build time.
 ## CUDA architectures, required by Colmap and tiny-cuda-nn.
-## NOTE: All commonly used GPU architectures are included and supported here. To speedup the image build process remove all architectures but the one of your explicit GPU. Find details here: https://developer.nvidia.com/cuda-gpus (8.6 translates to 86 in the line below) or in the docs.
-ARG CUDA_ARCHITECTURES=90;89;86;80;75;70;61;52;37
+## NOTE: Most commonly used GPU architectures are included and supported here. To speedup the image build process remove all architectures but the one of your explicit GPU. Find details here: https://developer.nvidia.com/cuda-gpus (8.6 translates to 86 in the line below) or in the docs.
+ARG CUDA_ARCHITECTURES=90;89;86;80;75
 
 # Set environment variables.
 ## Set non-interactive to prevent asking for user inputs blocking image creation.
@@ -53,17 +52,15 @@ RUN apt-get update && \
     libqt5opengl5-dev \
     libsqlite3-dev \
     libsuitesparse-dev \
-    nano \
     protobuf-compiler \
     python-is-python3 \
     python3.10-dev \
     python3-pip \
     qtbase5-dev \
-    sudo \
     vim-tiny \
-    wget && \
+    wget \
+    && \
     rm -rf /var/lib/apt/lists/*
-
 
 # Install GLOG (required by ceres).
 RUN git clone --branch v0.6.0 https://github.com/google/glog.git --single-branch && \
@@ -101,22 +98,6 @@ RUN git clone --branch 3.8 https://github.com/colmap/colmap.git --single-branch 
     make install && \
     cd ../.. && \
     rm -rf colmap
-
-# Create non root user and setup environment.
-RUN useradd -m -d /home/user -g root -G sudo -u ${USER_ID} user
-RUN usermod -aG sudo user
-# Set user password
-RUN echo "user:user" | chpasswd
-# Ensure sudo group users are not asked for a password when using sudo command by ammending sudoers file
-RUN echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-
-# Switch to new uer and workdir.
-USER ${USER_ID}
-WORKDIR /home/user
-
-# Add local user binary folder to PATH variable.
-ENV PATH="${PATH}:/home/user/.local/bin"
-SHELL ["/bin/bash", "-c"]
 
 # Upgrade pip and install packages.
 RUN python3.10 -m pip install --no-cache-dir --upgrade pip setuptools pathtools promise pybind11
@@ -158,15 +139,10 @@ RUN git clone --recursive https://github.com/cvg/pixel-perfect-sfm.git && \
 
 RUN python3.10 -m pip install --no-cache-dir omegaconf
 # Copy nerfstudio folder and give ownership to user.
-ADD . /home/user/nerfstudio
-USER root
-RUN chown -R user /home/user/nerfstudio
-USER ${USER_ID}
+ADD . /nerfstudio
 
 # Install nerfstudio dependencies.
-RUN cd nerfstudio && \
-    python3.10 -m pip install --no-cache-dir -e . && \
-    cd ..
+RUN cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .
 
 # Change working directory
 WORKDIR /workspace

@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,9 +25,11 @@ from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, get_args
 import numpy as np
 import torch
 import torch.nn.functional as F
-from viser import ClientHandle
+from viser import ClientHandle, PointCloudHandle
 
 from nerfstudio.cameras.cameras import Cameras
+from nerfstudio.cameras.lidars import intensity_to_rgb
+from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.model_components.renderers import background_color_override_context
 from nerfstudio.models.splatfacto import SplatfactoModel
 from nerfstudio.utils import colormaps, writer
@@ -86,6 +89,7 @@ class RenderStateMachine(threading.Thread):
         self.viser_scale_ratio = viser_scale_ratio
         self.client = client
         self.running = True
+        self.disabled = False
 
     def action(self, action: RenderAction):
         """Takes an action and updates the state machine
@@ -190,6 +194,14 @@ class RenderStateMachine(threading.Thread):
                     # Convert to z_depth if depth compositing is enabled.
                     R = camera.camera_to_worlds[0, 0:3, 0:3].T
                     camera_ray_bundle = camera.generate_rays(camera_indices=0, obb_box=obb)
+                    if outputs["depth"].shape[:-1] != camera_ray_bundle.directions.shape[:-1]:
+                        # If the depth image is not the same size as the camera rays, we need to resize it
+                        outputs["depth"] = F.interpolate(
+                            outputs["depth"][None, None, ..., 0],  # HW1 -> 11HW (batch, channel, H, W)
+                            size=camera_ray_bundle.directions.shape[:-1],
+                            mode="bilinear",
+                            align_corners=False,
+                        )[0, 0, ..., None]  # 11HW -> HW1  (drop batch and move channel to last dim)
                     pts = camera_ray_bundle.directions * outputs["depth"]
                     pts = (R @ (pts.view(-1, 3).T)).T.view(*camera_ray_bundle.directions.shape)
                     outputs["gl_z_buf_depth"] = -pts[..., 2:3]  # negative z axis is the coordinate convention
@@ -203,7 +215,7 @@ class RenderStateMachine(threading.Thread):
     def run(self):
         """Main loop for the render thread"""
         while self.running:
-            if not self.viewer.ready:
+            if not self.viewer.ready or self.disabled:
                 time.sleep(0.1)
                 continue
             if not self.render_trigger.wait(0.2):
@@ -344,3 +356,96 @@ class RenderStateMachine(threading.Thread):
             raise ValueError(f"Invalid state: {self.state}")
 
         return image_height, image_width
+
+
+class LidarRenderer(threading.Thread):
+    """Simple lidar renderering thread that renders lidar data and sends it to the viewer
+
+    Args:
+        viewer: the viewer object
+    """
+
+    def __init__(self, viewer: Viewer, client: ClientHandle):
+        super().__init__()
+        self.viewer = viewer
+        self.client = client
+        self.running = True
+        self.rendered_pc_handle: Optional[PointCloudHandle] = None
+        self._render_next = False
+
+    def trigger(self):
+        self._render_next = True
+
+    def run(self):
+        """Main loop for the thread"""
+        while self.running:
+            if not self._render_next:
+                time.sleep(0.1)
+                continue
+            try:
+                self._render_lidar()
+                self._render_next = False
+            except viewer_utils.IOChangeException:
+                continue
+
+    def _render_lidar(self):
+        control_panel = self.viewer.control_panel
+        # Construct rays from lidar specifications
+        device = self.viewer.get_model().device
+        v_angles = torch.linspace(*np.deg2rad(control_panel.lidar_fov), control_panel.lidar_beams, device=device)
+        h_angles = torch.arange(0, 2 * np.pi, np.deg2rad(control_panel.lidar_azim_res), device=device)
+        v_angles, h_angles = torch.meshgrid(v_angles, h_angles)
+        v_angles, h_angles = v_angles.flatten(), h_angles.flatten()
+        directions = torch.stack(
+            [
+                torch.cos(v_angles) * torch.cos(h_angles),
+                torch.cos(v_angles) * torch.sin(h_angles),
+                torch.sin(v_angles),
+            ],
+            dim=-1,
+        )
+        origins = torch.tensor(control_panel.lidar_position, dtype=torch.float32, device=device)
+        lidar_ray_bundle = RayBundle(
+            origins=origins,
+            directions=directions,
+            pixel_area=torch.zeros_like(v_angles, dtype=torch.float32)[..., None],  # TODO: is this relevant?
+            metadata={"is_lidar": torch.ones_like(v_angles, dtype=torch.bool)[..., None]},
+            times=torch.tensor([self.viewer.control_panel.time], dtype=torch.float32, device=device),
+        )
+
+        # Run model
+        with self.viewer.train_lock or contextlib.nullcontext():
+            self.viewer.get_model().eval()
+            with torch.no_grad():
+                outputs = self.viewer.get_model().get_outputs_for_camera_ray_bundle(lidar_ray_bundle)
+            self.viewer.get_model().train()
+
+        point_cloud = torch.cat(
+            [
+                outputs["depth"] * directions + origins,
+                outputs["intensity"],
+            ],
+            dim=-1,
+        )
+        if "ray_drop_prob" in outputs and control_panel.lidar_use_ray_drop:
+            point_cloud = point_cloud[outputs["ray_drop_prob"].squeeze(-1) < control_panel.lidar_ray_drop_threshold]
+        else:
+            point_cloud = point_cloud[outputs["depth"].squeeze(-1) < control_panel.lidar_max_dist]
+        point_cloud = point_cloud.cpu().numpy()
+
+        if self.rendered_pc_handle is not None:
+            self.rendered_pc_handle.remove()
+
+        if control_panel.lidar_color_by_intensity:
+            colors = intensity_to_rgb(point_cloud[:, 3])
+        else:
+            colors = (200, 200, 200)
+
+        self.rendered_pc_handle = self.client.add_point_cloud(
+            name="/rendered_point_cloud",
+            points=point_cloud[:, :3],
+            colors=colors,
+            point_size=0.05,
+            point_shape="circle",
+            # pc is in global coords so no need to set position and rotation
+        )

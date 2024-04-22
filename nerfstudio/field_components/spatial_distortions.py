@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +16,14 @@
 """Space distortions."""
 
 import abc
-from typing import Optional, Union
+from typing import Optional, Union, overload
 
 import torch
 from functorch import jacrev, vmap
 from jaxtyping import Float
 from torch import Tensor, nn
 
-from nerfstudio.utils.math import Gaussians
+from nerfstudio.utils.math import Gaussians, GaussiansStd
 
 
 class SpatialDistortion(nn.Module):
@@ -63,7 +64,19 @@ class SceneContraction(SpatialDistortion):
         super().__init__()
         self.order = order
 
-    def forward(self, positions):
+    @overload
+    def forward(self, positions: Gaussians) -> Gaussians:
+        ...
+
+    @overload
+    def forward(self, positions: GaussiansStd) -> GaussiansStd:
+        ...
+
+    @overload
+    def forward(self, positions: Float[Tensor, "*bs 3"]) -> Float[Tensor, "*bs 3"]:
+        ...
+
+    def forward(self, positions: Union[Gaussians, GaussiansStd, Tensor]) -> Union[Gaussians, GaussiansStd, Tensor]:
         def contract(x):
             mag = torch.linalg.norm(x, ord=self.order, dim=-1)[..., None]
             return torch.where(mag < 1, x, (2 - (1 / mag)) * (x / mag))
@@ -87,4 +100,42 @@ class SceneContraction(SpatialDistortion):
 
             return Gaussians(mean=means, cov=cov)
 
+        elif isinstance(positions, GaussiansStd):
+            # ZipNerf-style linearized contraction
+            means = positions.mean.clone()
+            std = positions.std.clone()
+            mag = torch.linalg.norm(means, ord=self.order, dim=-1)[..., None]
+            mask = mag < 1
+            clamped_mag = mag.clamp_min(1.0)
+            means = torch.where(mask, means, (2 - (1 / clamped_mag)) * (means / clamped_mag))
+            std_scaling = ((2 * clamped_mag - 1).pow(1 / 3) / clamped_mag) ** 2
+            std = torch.where(mask, std, std * std_scaling)
+            return GaussiansStd(mean=means, std=std)
+
         return contract(positions)
+
+
+class ScaledSceneContraction(SceneContraction):
+    """This is a SceneContraction with a scale factor applied before the contraction."""
+
+    def __init__(self, order: Optional[Union[float, int]] = None, scale: float = 1.0, normalize: bool = True) -> None:
+        super().__init__(order=order)
+        self.scale = scale
+        self.normalize = normalize
+
+    def forward(self, positions):
+        if isinstance(positions, Gaussians):
+            positions = super().forward(Gaussians(mean=positions.mean / self.scale, cov=positions.cov / self.scale**2))
+            if self.normalize:
+                positions.mean = (positions.mean + 2.0) / 4.0
+                positions.cov = positions.cov / 16.0
+        elif isinstance(positions, GaussiansStd):
+            positions = super().forward(GaussiansStd(mean=positions.mean / self.scale, std=positions.std / self.scale))
+            if self.normalize:
+                positions.mean = (positions.mean + 2.0) / 4.0
+                positions.std = positions.std / 4.0
+        else:
+            positions = super().forward(positions / self.scale)
+            if self.normalize:
+                positions = (positions + 2.0) / 4.0
+        return positions

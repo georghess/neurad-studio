@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -203,12 +204,12 @@ class NerfactoField(Field):
 
     def get_density(self, ray_samples: RaySamples) -> Tuple[Tensor, Tensor]:
         """Computes and returns the densities."""
+        # Normalize positions within box to [0, 1], points outside box are outside range
+        positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
         if self.spatial_distortion is not None:
-            positions = ray_samples.frustums.get_positions()
-            positions = self.spatial_distortion(positions)
-            positions = (positions + 2.0) / 4.0
-        else:
-            positions = SceneBox.get_normalized_positions(ray_samples.frustums.get_positions(), self.aabb)
+            positions = positions * 2.0 - 1.0  # inside box from [0, 1] -> [-1, 1], outside [-inf, inf]
+            positions = self.spatial_distortion(positions)  # [-inf, inf] -> [-2, 2]
+            positions = (positions + 2.0) / 4.0  # [-2, 2] -> [0, 1]
         # Make sure the tcnn gets inputs between 0 and 1.
         selector = ((positions > 0.0) & (positions < 1.0)).all(dim=-1)
         positions = positions * selector[..., None]

@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +15,7 @@
 
 """ Control panel for the viewer """
 from collections import defaultdict
+from functools import partial
 from typing import Callable, DefaultDict, List, Tuple, get_args
 
 import numpy as np
@@ -25,6 +27,7 @@ from viser import ViserServer
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.utils.colormaps import ColormapOptions, Colormaps
 from nerfstudio.viewer.viewer_elements import (  # ViewerButtonGroup,
+    ViewerButton,
     ViewerButtonGroup,
     ViewerCheckbox,
     ViewerDropdown,
@@ -32,6 +35,7 @@ from nerfstudio.viewer.viewer_elements import (  # ViewerButtonGroup,
     ViewerNumber,
     ViewerRGB,
     ViewerSlider,
+    ViewerVec2,
     ViewerVec3,
 )
 
@@ -55,6 +59,9 @@ class ControlPanel:
         rerender_cb: Callable[[], None],
         update_output_cb: Callable,
         update_split_output_cb: Callable,
+        rerender_lidar_cb: Callable,
+        rendering_disabled_cb: Callable,
+        max_time: float = 1.0,
         default_composite_depth: bool = True,
     ):
         self.viser_scale_ratio = scale_ratio
@@ -85,6 +92,47 @@ class ControlPanel:
         )
         self._min = ViewerNumber("Min", 0.0, cb_hook=lambda _: rerender_cb(), hint="Min value of the colormap")
         self._max = ViewerNumber("Max", 1.0, cb_hook=lambda _: rerender_cb(), hint="Max value of the colormap")
+        self._range_min = ViewerNumber(
+            "Range Min", 0.0, cb_hook=lambda _: rerender_cb(), hint="Min value of the range (0.0 for auto))"
+        )
+        self._range_max = ViewerNumber(
+            "Range Max", 0.0, cb_hook=lambda _: rerender_cb(), hint="Max value of the range (0.0 for auto))"
+        )
+
+        self._lidar_enabled = ViewerCheckbox(
+            "Enable",
+            False,
+            cb_hook=lambda han: [self.update_control_panel(), rerender_cb(), rerender_lidar_cb(han)],
+            hint="Render lidar",
+        )
+        self._lidar_position = ViewerVec3(
+            "Position", (0.0, 0.0, 0.0), cb_hook=rerender_lidar_cb, hint="Position of the lidar"
+        )
+        self._lidar_snap_to_camera = ViewerButton(
+            "Snap to Camera", cb_hook=partial(rerender_lidar_cb, snap_to_cam=True)
+        )
+        self._lidar_beams = ViewerSlider("Num Beams", 24, 1, 256, 1, cb_hook=rerender_lidar_cb, hint="Number of beams")
+        self._lidar_fov = ViewerVec2(
+            "Vertical FoV", (-15.0, 15.0), cb_hook=rerender_lidar_cb, hint="Vertical field of view"
+        )
+        self._lidar_azim_res = ViewerSlider(
+            "Azimuth Res", 0.5, 0.01, 1.0, 0.01, cb_hook=rerender_lidar_cb, hint="Azimuth resolution (deg)"
+        )
+        self._lidar_max_dist = ViewerSlider(
+            "Distance Cutoff", 250.0, 10.0, 500.0, 10.0, cb_hook=rerender_lidar_cb, hint="Distance cutoff (m)"
+        )
+        self._lidar_use_ray_drop = ViewerCheckbox(
+            "Use Ray Drop",
+            True,
+            cb_hook=lambda han: [rerender_lidar_cb(han), self._lidar_ray_drop_threshold.set_visible(han.value)],
+            hint="Use ray drop probability",
+        )
+        self._lidar_ray_drop_threshold = ViewerSlider(
+            "Ray Drop Threshold", 0.0, 0.0, 1.0, 0.01, cb_hook=rerender_lidar_cb, visible=True
+        )
+        self._lidar_color_by_intensity = ViewerCheckbox(
+            "Color by Intensity", False, cb_hook=rerender_lidar_cb, hint="Color the lidar points by intensity"
+        )
 
         self._split = ViewerCheckbox(
             "Enable",
@@ -119,6 +167,12 @@ class ControlPanel:
             "Max ", 1.0, cb_hook=lambda _: rerender_cb(), hint="Max value of the colormap of the second output"
         )
 
+        self._rendering_disabled = ViewerCheckbox(
+            "Disable Rendering",
+            False,
+            cb_hook=lambda han: [self.update_control_panel(), rerender_cb(), rendering_disabled_cb(han)],
+        )
+        self._color_override = ViewerRGB("Color Override", (255, 255, 255), cb_hook=rendering_disabled_cb)
         self._train_util = ViewerSlider(
             "Train Util",
             default_value=0.85,
@@ -186,13 +240,17 @@ class ControlPanel:
             rpy = vtf.SO3(self._crop_handle.wxyz).as_rpy_radians()
             self._crop_rot.value = (float(rpy.roll), float(rpy.pitch), float(rpy.yaw))
 
-        self._time = ViewerSlider("Time", 0.0, 0.0, 1.0, 0.01, cb_hook=lambda _: rerender_cb(), hint="Time to render")
+        self._time = ViewerSlider(
+            "Time", 0.0, 0.0, max_time, 0.01, cb_hook=lambda _: rerender_cb(), hint="Time to render"
+        )
         self._time_enabled = time_enabled
 
         self.add_element(self._train_speed)
         self.add_element(self._train_util)
 
         with self.viser_server.add_gui_folder("Render Options"):
+            self.add_element(self._rendering_disabled)
+            self.add_element(self._color_override, additional_tags=("rendering_disabled",))
             self.add_element(self._max_res)
             self.add_element(self._output_render)
             self.add_element(self._colormap)
@@ -202,6 +260,20 @@ class ControlPanel:
             self.add_element(self._normalize, additional_tags=("colormap",))
             self.add_element(self._min, additional_tags=("colormap",))
             self.add_element(self._max, additional_tags=("colormap",))
+            self.add_element(self._range_min, additional_tags=("colormap",))
+            self.add_element(self._range_max, additional_tags=("colormap",))
+
+        with self.viser_server.add_gui_folder("Lidar Rendering"):
+            self.add_element(self._lidar_enabled)
+            self.add_element(self._lidar_beams, additional_tags=("lidar",))
+            self.add_element(self._lidar_fov, additional_tags=("lidar",))
+            self.add_element(self._lidar_azim_res, additional_tags=("lidar",))
+            self.add_element(self._lidar_position, additional_tags=("lidar",))
+            self.add_element(self._lidar_snap_to_camera, additional_tags=("lidar",))
+            self.add_element(self._lidar_max_dist, additional_tags=("lidar",))
+            self.add_element(self._lidar_use_ray_drop, additional_tags=("lidar",))
+            self.add_element(self._lidar_ray_drop_threshold, additional_tags=("lidar",))
+            self.add_element(self._lidar_color_by_intensity, additional_tags=("lidar",))
 
         # split options
         with self.viser_server.add_gui_folder("Split Screen"):
@@ -283,6 +355,10 @@ class ControlPanel:
             e.set_hidden(not self._split.value or self.split_output_render == "rgb")
         for e in self._elements_by_tag["crop"]:
             e.set_hidden(not self.crop_viewport)
+        for e in self._elements_by_tag["lidar"]:
+            e.set_hidden(not self.lidar_enabled)
+        for e in self._elements_by_tag["rendering_disabled"]:
+            e.set_hidden(not self.rendering_disabled)
         self._time.set_hidden(not self._time_enabled)
         self._split_percentage.set_hidden(not self._split.value)
         self._split_output_render.set_hidden(not self._split.value)
@@ -332,6 +408,16 @@ class ControlPanel:
     def train_util(self) -> float:
         """Returns the current train util setting"""
         return self._train_util.value
+
+    @property
+    def rendering_disabled(self) -> bool:
+        """Returns whether rendering is enabled"""
+        return self._rendering_disabled.value
+
+    @property
+    def color_override(self) -> Tuple[int, int, int]:
+        """Returns whether the color override is enabled"""
+        return self._color_override.value
 
     @property
     def max_res(self) -> int:
@@ -385,6 +471,8 @@ class ControlPanel:
             colormap_min=self._min.value,
             colormap_max=self._max.value,
             invert=self._invert.value,
+            range_min=self._range_min.value if self._range_min.value != 0 else None,
+            range_max=self._range_max.value if self._range_max.value != 0 else None,
         )
 
     @property
@@ -401,6 +489,56 @@ class ControlPanel:
     @property
     def layer_depth(self):
         return self._layer_depth.value
+
+    @property
+    def lidar_enabled(self) -> bool:
+        """Returns the current lidar enabled setting"""
+        return self._lidar_enabled.value
+
+    @property
+    def lidar_position(self) -> Tuple[float, float, float]:
+        """Returns the current lidar position"""
+        return self._lidar_position.value
+
+    @lidar_position.setter
+    def lidar_position(self, value: Tuple[float, float, float]):
+        """Sets the lidar position"""
+        self._lidar_position.value = value
+
+    @property
+    def lidar_beams(self) -> int:
+        """Returns the current lidar beams"""
+        return self._lidar_beams.value
+
+    @property
+    def lidar_fov(self) -> Tuple[float, float]:
+        """Returns the current lidar fov"""
+        return self._lidar_fov.value
+
+    @property
+    def lidar_azim_res(self) -> float:
+        """Returns the current lidar azimuthal resolution"""
+        return self._lidar_azim_res.value
+
+    @property
+    def lidar_max_dist(self) -> float:
+        """Returns the current lidar max distance"""
+        return self._lidar_max_dist.value
+
+    @property
+    def lidar_use_ray_drop(self) -> bool:
+        """Whether to use ray drop probability when rendering lidar"""
+        return self._lidar_use_ray_drop.value
+
+    @property
+    def lidar_ray_drop_threshold(self) -> float:
+        """The threshold at which to consider a lidar ray to be dropped"""
+        return self._lidar_ray_drop_threshold.value
+
+    @property
+    def lidar_color_by_intensity(self) -> bool:
+        """Whether to color the lidar points by intensity"""
+        return self._lidar_color_by_intensity.value
 
 
 def _get_colormap_options(dimensions: int, dtype: type) -> List[Colormaps]:

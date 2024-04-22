@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,7 +14,6 @@
 # limitations under the License.
 
 """Base Configs"""
-
 
 from __future__ import annotations
 
@@ -152,3 +152,5 @@ class ViewerConfig(PrintableConfig):
     """Scale for the camera frustums in the viewer."""
     default_composite_depth: bool = True
     """The default value for compositing depth. Turn off if you want to see the camera frustums without occlusions."""
+    max_points_per_cloud: Optional[int] = 2000
+    """Max number of points per point cloud."""

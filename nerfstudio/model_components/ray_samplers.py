@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +26,7 @@ from nerfacc import OccGridEstimator
 from torch import Tensor, nn
 
 from nerfstudio.cameras.rays import Frustums, RayBundle, RaySamples
+from nerfstudio.utils.math import inv_power_fn, power_fn
 
 
 class Sampler(nn.Module):
@@ -97,7 +99,9 @@ class SpacedSampler(Sampler):
         assert num_samples is not None
         num_rays = ray_bundle.origins.shape[0]
 
-        bins = torch.linspace(0.0, 1.0, num_samples + 1).to(ray_bundle.origins.device)[None, ...]  # [1, num_samples+1]
+        bins = torch.linspace(0.0, 1.0, num_samples + 1, device=ray_bundle.origins.device)[
+            None, ...
+        ]  # [1, num_samples+1]
 
         # TODO More complicated than it needs to be.
         if self.train_stratified and self.training:
@@ -317,7 +321,7 @@ class PDFSampler(Sampler):
         if self.train_stratified and self.training:
             # Stratified samples between 0 and 1
             u = torch.linspace(0.0, 1.0 - (1.0 / num_bins), steps=num_bins, device=cdf.device)
-            u = u.expand(size=(*cdf.shape[:-1], num_bins))
+            u = u.expand(size=(*cdf.shape[:-1], num_bins)).clone()  # TODO(atonderski) why clone?
             if self.single_jitter:
                 rand = torch.rand((*cdf.shape[:-1], 1), device=cdf.device) / num_bins
             else:
@@ -327,7 +331,7 @@ class PDFSampler(Sampler):
             # Uniform samples between 0 and 1
             u = torch.linspace(0.0, 1.0 - (1.0 / num_bins), steps=num_bins, device=cdf.device)
             u = u + 1.0 / (2 * num_bins)
-            u = u.expand(size=(*cdf.shape[:-1], num_bins))
+            u = u.expand(size=(*cdf.shape[:-1], num_bins)).clone()  # TODO(atonderski) why clone?
         u = u.contiguous()
 
         assert (
@@ -383,6 +387,17 @@ class DensityFn(Protocol):
         ...
 
 
+class AlphaFn(Protocol):
+    """
+    Function that evaluates alpha at a given point.
+    """
+
+    def __call__(
+        self, positions: Float[Tensor, "*batch 3"], times: Optional[Float[Tensor, "*batch 1"]] = None
+    ) -> Float[Tensor, "*batch 1"]:
+        ...
+
+
 class VolumetricSampler(Sampler):
     """Sampler inspired by the one proposed in the Instant-NGP paper.
     Generates samples along a ray by sampling the occupancy field.
@@ -398,11 +413,15 @@ class VolumetricSampler(Sampler):
         self,
         occupancy_grid: OccGridEstimator,
         density_fn: Optional[DensityFn] = None,
+        alpha_fn: Optional[AlphaFn] = None,
     ):
         super().__init__()
         assert occupancy_grid is not None
         self.density_fn = density_fn
+        self.alpha_fn = alpha_fn
         self.occupancy_grid = occupancy_grid
+
+        assert not (alpha_fn is not None and density_fn is not None), "density_fn and alpha_fn cannot be both set"
 
     def get_sigma_fn(self, origins, directions, times=None) -> Optional[Callable]:
         """Returns a function that returns the density of a point.
@@ -429,6 +448,32 @@ class VolumetricSampler(Sampler):
             return density_fn(positions, times[ray_indices]).squeeze(-1)
 
         return sigma_fn
+
+    def get_alpha_fn(self, origins, directions, times=None) -> Optional[Callable]:
+        """Returns a function that returns the density of a point.
+
+        Args:
+            origins: Origins of rays
+            directions: Directions of rays
+            times: Times at which rays are sampled
+        Returns:
+            Function that returns the density of a point or None if a density function is not provided.
+        """
+
+        if self.alpha_fn is None or not self.training:
+            return None
+
+        alpha_fn = self.alpha_fn
+
+        def alpha_fn_out(t_starts, t_ends, ray_indices):
+            t_origins = origins[ray_indices]
+            t_dirs = directions[ray_indices]
+            positions = t_origins + t_dirs * (t_starts + t_ends)[:, None] / 2.0
+            if times is None:
+                return alpha_fn(positions).squeeze(-1)
+            return alpha_fn(positions, times[ray_indices]).squeeze(-1)
+
+        return alpha_fn_out
 
     def generate_ray_samples(self) -> RaySamples:
         raise RuntimeError(
@@ -485,6 +530,7 @@ class VolumetricSampler(Sampler):
             t_min=t_min,
             t_max=t_max,
             sigma_fn=self.get_sigma_fn(rays_o, rays_d, times),
+            alpha_fn=self.get_alpha_fn(rays_o, rays_d, times),
             render_step_size=render_step_size,
             near_plane=near_plane,
             far_plane=far_plane,
@@ -511,7 +557,7 @@ class VolumetricSampler(Sampler):
                 directions=dirs,
                 starts=starts[..., None],
                 ends=ends[..., None],
-                pixel_area=ray_bundle[ray_indices].pixel_area,
+                pixel_area=ray_bundle.pixel_area[ray_indices],
             ),
             camera_indices=camera_indices,
         )
@@ -578,10 +624,12 @@ class ProposalNetworkSampler(Sampler):
         self,
         ray_bundle: Optional[RayBundle] = None,
         density_fns: Optional[List[Callable]] = None,
+        pass_ray_samples: bool = False,
     ) -> Tuple[RaySamples, List, List]:
         assert ray_bundle is not None
         assert density_fns is not None
-
+        if not pass_ray_samples:
+            density_fns = [lambda rs: f(rs.frustums.get_positions()) for f in density_fns]
         weights_list = []
         ray_samples_list = []
 
@@ -604,10 +652,10 @@ class ProposalNetworkSampler(Sampler):
             if is_prop:
                 if updated:
                     # always update on the first step or the inf check in grad scaling crashes
-                    density = density_fns[i_level](ray_samples.frustums.get_positions())
+                    density = density_fns[i_level](ray_samples)
                 else:
                     with torch.no_grad():
-                        density = density_fns[i_level](ray_samples.frustums.get_positions())
+                        density = density_fns[i_level](ray_samples)
                 weights = ray_samples.get_weights(density)
                 weights_list.append(weights)  # (num_rays, num_samples)
                 ray_samples_list.append(ray_samples)
@@ -785,3 +833,20 @@ class NeuSSampler(Sampler):
         )
 
         return ray_samples, sorted_index
+
+
+class PowerSampler(SpacedSampler):
+    """Sampler according to the ZipNeRF's power function
+    Args:
+        num_samples: Number of samples per ray
+        train_stratified: Use stratified sampling during training. Defaults to True
+        lambda_: Parameter of power transformation
+    """
+
+    def __init__(self, num_samples: Optional[int] = None, lambda_=-1.5, scaling=2.0, **kwargs) -> None:
+        super().__init__(
+            num_samples=num_samples,
+            spacing_fn=lambda x: power_fn(x * scaling, lambda_),
+            spacing_fn_inv=lambda x: inv_power_fn(x, lambda_) / scaling,
+            **kwargs,
+        )

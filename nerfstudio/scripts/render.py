@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,18 +17,20 @@
 """
 render.py
 """
+
 from __future__ import annotations
 
 import gzip
 import json
 import os
+import pickle
 import shutil
 import struct
 import sys
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import mediapy as media
 import numpy as np
@@ -42,7 +45,12 @@ from rich.table import Table
 from torch import Tensor
 from typing_extensions import Annotated
 
-from nerfstudio.cameras.camera_paths import get_interpolated_camera_path, get_path_from_json, get_spiral_path
+from nerfstudio.cameras.camera_paths import (
+    get_interpolated_camera_path,
+    get_interpolated_spiral_camera_path,
+    get_path_from_json,
+    get_spiral_path,
+)
 from nerfstudio.cameras.cameras import Cameras, CameraType, RayBundle
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
@@ -446,6 +454,7 @@ class RenderCameraPath(BaseRender):
             self.load_config,
             eval_num_rays_per_chunk=self.eval_num_rays_per_chunk,
             test_mode="inference",
+            update_config_callback=streamline_ad_config,
         )
 
         install_checks.check_ffmpeg_installed()
@@ -581,16 +590,37 @@ class RenderCameraPath(BaseRender):
 class RenderInterpolated(BaseRender):
     """Render a trajectory that interpolates between training or eval dataset images."""
 
-    pose_source: Literal["eval", "train"] = "eval"
+    pose_source: Literal["eval", "train", "train+eval"] = "eval"
     """Pose source to render."""
     interpolation_steps: int = 10
     """Number of interpolation steps between eval dataset cameras."""
     order_poses: bool = False
     """Whether to order camera poses by proximity."""
+    sensor_index: Optional[int] = None
+    """Sensor index to render. If None, render all sensors."""
     frame_rate: int = 24
     """Frame rate of the output video."""
     output_format: Literal["images", "video"] = "video"
     """How to save output data."""
+
+    spiral_radius: float = 0.0
+    """Radius of the spiral."""
+    spiral_rotations: float = 1.0
+    """Number of rotations of the spiral."""
+
+    shift: Tuple[float, ...] = (0.0, 0.0, 0.0)
+    """Shift to apply to the camera pose."""
+    shift_time: float = 0.0
+    """Time at which to apply the shift."""
+    shift_steps: int = 0
+    """Number of steps to interpolate the shift over."""
+
+    actor_shift: Tuple[float, ...] = (0.0, 0.0, 0.0)
+    """Shift to apply to all actor poses."""
+    actor_removal_time: Optional[float] = None
+    """Time at which to remove all actors."""
+    actor_stop_time: Optional[float] = 3.2
+    """Time at which to stop all actors."""
 
     def main(self) -> None:
         """Main function."""
@@ -598,39 +628,157 @@ class RenderInterpolated(BaseRender):
             self.load_config,
             eval_num_rays_per_chunk=self.eval_num_rays_per_chunk,
             test_mode="test",
+            update_config_callback=streamline_ad_config,
         )
+
+        if self.spiral_radius and any(self.shift):
+            CONSOLE.print(
+                "Warning: Rendering with both spiral and shift is not supported. Only spiral will be rendered."
+            )
 
         install_checks.check_ffmpeg_installed()
 
         if self.pose_source == "eval":
             assert pipeline.datamanager.eval_dataset is not None
             cameras = pipeline.datamanager.eval_dataset.cameras
-        else:
+        elif self.pose_source == "train":
             assert pipeline.datamanager.train_dataset is not None
             cameras = pipeline.datamanager.train_dataset.cameras
+        else:
+            assert pipeline.datamanager.train_dataset is not None
+            assert pipeline.datamanager.eval_dataset is not None
+            cameras = pipeline.datamanager.train_dataset.cameras.cat([pipeline.datamanager.eval_dataset.cameras])
 
-        seconds = self.interpolation_steps * len(cameras) / self.frame_rate
-        camera_path = get_interpolated_camera_path(
-            cameras=cameras,
-            steps=self.interpolation_steps,
-            order_poses=self.order_poses,
-        )
+        if cameras.times is not None:
+            cameras = cameras[torch.argsort(cameras.times.squeeze(-1))]
 
-        _render_trajectory_video(
-            pipeline,
-            camera_path,
-            output_filename=self.output_path,
-            rendered_output_names=self.rendered_output_names,
-            rendered_resolution_scaling_factor=1.0 / self.downscale_factor,
-            seconds=seconds,
-            output_format=self.output_format,
-            image_format=self.image_format,
-            depth_near_plane=self.depth_near_plane,
-            depth_far_plane=self.depth_far_plane,
-            colormap_options=self.colormap_options,
-            render_nearest_camera=self.render_nearest_camera,
-            check_occlusions=self.check_occlusions,
+        if cameras.metadata and "sensor_idxs" in cameras.metadata:
+            sensor_indices = (
+                torch.tensor(self.sensor_index).unsqueeze(0)
+                if self.sensor_index is not None
+                else cameras.metadata["sensor_idxs"].unique()
+            )
+        else:
+            sensor_indices = torch.tensor([0]).unsqueeze(0)
+            cameras.metadata["sensor_idxs"] = torch.zeros_like(cameras.camera_type, dtype=torch.int64)
+
+        modify_actors(pipeline, self.actor_shift, self.actor_removal_time, self.actor_stop_time)
+
+        for sensor_index in sensor_indices:
+            mask = (cameras.metadata["sensor_idxs"] == sensor_index).squeeze(-1)
+            curr_cameras = cameras[mask]
+
+            seconds = self.interpolation_steps * len(curr_cameras) / self.frame_rate
+            if self.spiral_radius:
+                camera_path = get_interpolated_spiral_camera_path(
+                    cameras=curr_cameras,
+                    steps=self.interpolation_steps,
+                    radius=self.spiral_radius,
+                    rotations=self.spiral_rotations,
+                )
+            elif any(self.shift):
+                camera_path = get_shifted_camera_path(
+                    cameras=curr_cameras,
+                    shift=self.shift,
+                    shift_time=self.shift_time,
+                    shift_steps=self.shift_steps,
+                    interpolation_steps=self.interpolation_steps,
+                )
+            else:
+                camera_path = get_interpolated_camera_path(
+                    cameras=curr_cameras,
+                    steps=self.interpolation_steps,
+                    order_poses=self.order_poses,
+                )
+                if curr_cameras.times is not None:
+                    times, stepsize = curr_cameras.times[..., 0], 1.0 / self.interpolation_steps
+                    camera_path.times = torch.from_numpy(
+                        np.interp(
+                            np.append(np.arange(0, len(times) - 1, stepsize), len(times) - 1),
+                            np.arange(len(times)),
+                            times,
+                        )[..., None]
+                    ).float()
+
+            camera_path.metadata = camera_path.metadata or {}
+            if curr_cameras.metadata and "sensor_idxs" in curr_cameras.metadata:
+                camera_path.metadata["sensor_idxs"] = torch.full_like(camera_path.width, sensor_index.item())
+
+            print("Rendering sensor index ", sensor_index.item())
+            _render_trajectory_video(
+                pipeline,
+                camera_path,
+                output_filename=self.output_path.with_stem(f"{self.output_path.stem}_sensor_idx_{sensor_index}"),
+                rendered_output_names=self.rendered_output_names,
+                rendered_resolution_scaling_factor=1.0 / self.downscale_factor,
+                seconds=seconds,
+                output_format=self.output_format,
+                image_format=self.image_format,
+                depth_near_plane=self.depth_near_plane,
+                depth_far_plane=self.depth_far_plane,
+                colormap_options=self.colormap_options,
+                render_nearest_camera=self.render_nearest_camera,
+                check_occlusions=self.check_occlusions,
+            )
+
+
+def modify_actors(pipeline, actor_shift, actor_removal_time, actor_stop_time):
+    actor_shift = torch.nn.Parameter(torch.tensor(actor_shift, dtype=torch.float32, device=pipeline.model.device))
+    with torch.no_grad():
+        pipeline.model.dynamic_actors.actor_positions += actor_shift
+        if actor_removal_time is not None:
+            no_actor_mask = pipeline.model.dynamic_actors.unique_timestamps > actor_removal_time
+            pipeline.model.dynamic_actors.actor_present_at_time[no_actor_mask, :] = False
+        if actor_stop_time is not None:
+            actor_stop_idx = torch.searchsorted(pipeline.model.dynamic_actors.unique_timestamps, actor_stop_time)
+            freeze_position = pipeline.model.dynamic_actors.actor_positions[actor_stop_idx].unsqueeze(0)
+            freeze_rotation = pipeline.model.dynamic_actors.actor_rotations_6d[actor_stop_idx].unsqueeze(0)
+            pipeline.model.dynamic_actors.actor_positions[actor_stop_idx:] = freeze_position
+            pipeline.model.dynamic_actors.actor_rotations_6d[actor_stop_idx:] = freeze_rotation
+
+
+def get_shifted_camera_path(cameras, shift, shift_time, shift_steps, interpolation_steps):
+    if cameras.times is not None:
+        # find index of time closest to shift_time
+        shift_idx = torch.argmin(torch.abs(cameras.times - shift_time))
+    else:
+        # warn user that we are assuming shift_time is the middle of the trajectory
+        CONSOLE.print(
+            "Warning: Assuming shift_time is the middle of the trajectory. "
+            "If this is not the case, please specify times in the camera path JSON."
         )
+        shift_idx = int(shift_time * len(cameras))
+    pre_shift_cams = cameras[:shift_idx]
+    post_shift_cams = cameras[shift_idx:]
+    post_shift_cams.camera_to_worlds = post_shift_cams.camera_to_worlds.clone()
+    post_shift_cams.camera_to_worlds[..., :3, 3] = post_shift_cams.camera_to_worlds[..., :3, 3] + torch.tensor(shift)
+    post_shift_camera_path = get_interpolated_camera_path(post_shift_cams, steps=interpolation_steps, order_poses=False)
+    if (times := post_shift_cams.times) is not None:
+        post_shift_camera_path.times = torch.from_numpy(
+            np.interp(
+                np.append(np.arange(0, len(times) - 1, 1 / interpolation_steps), len(times) - 1),
+                np.arange(len(times)),
+                times.squeeze(-1),
+            )[..., None]
+        ).float()
+
+    if len(pre_shift_cams) == 0:
+        return post_shift_camera_path
+
+    pre_shift_camera_path = get_interpolated_camera_path(pre_shift_cams, steps=interpolation_steps, order_poses=False)
+    mid_shift_camera_path = get_interpolated_camera_path(
+        pre_shift_cams[-1:].cat([post_shift_cams[:1]]), steps=shift_steps, order_poses=False
+    )
+    if (times := pre_shift_cams.times) is not None:
+        pre_shift_camera_path.times = torch.from_numpy(
+            np.interp(
+                np.append(np.arange(0, len(times) - 1, 1 / interpolation_steps), len(times) - 1),
+                np.arange(len(times)),
+                times.squeeze(-1),
+            )[..., None]
+        ).float()
+        mid_shift_camera_path.times = torch.full_like(mid_shift_camera_path.cy, pre_shift_camera_path.times[-1].item())
+    return pre_shift_camera_path.cat([mid_shift_camera_path, post_shift_camera_path])
 
 
 @dataclass
@@ -652,6 +800,7 @@ class SpiralRender(BaseRender):
             self.load_config,
             eval_num_rays_per_chunk=self.eval_num_rays_per_chunk,
             test_mode="test",
+            update_config_callback=streamline_ad_config,
         )
 
         install_checks.check_ffmpeg_installed()
@@ -703,21 +852,46 @@ def _disable_datamanager_setup(cls):
 class DatasetRender(BaseRender):
     """Render all images in the dataset."""
 
+    pose_source: Literal["train", "val", "test", "train+test", "train+val"] = "test"
+    """Split to render."""
     output_path: Path = Path("renders")
     """Path to output video file."""
     data: Optional[Path] = None
     """Override path to the dataset."""
+    config_output_dir: Optional[Path] = None
+    """Override the config output dir. Used to load the model."""
     downscale_factor: Optional[float] = None
     """Scaling factor to apply to the camera image resolution."""
-    split: Literal["train", "val", "test", "train+test"] = "test"
-    """Split to render."""
-    rendered_output_names: Optional[List[str]] = field(default_factory=lambda: None)
+    rendered_output_names: List[str] = field(default_factory=lambda: ["all"])
     """Name of the renderer outputs to use. rgb, depth, raw-depth, gt-rgb etc. By default all outputs are rendered."""
+    strict_load: bool = True
+    """Whether to strictly load the config."""
+    load_ignore_keys: Optional[List[str]] = field(
+        default_factory=lambda: []
+    )  # e.g. ["model.camera_optimizer.pose_adjustment", "_model.camera_optimizer.pose_adjustment"]
+    """Keys to ignore when loading the config."""
+
+    render_height: Optional[int] = None
+    """Height to render the images at."""
+    render_width: Optional[int] = None
+    """Width to render the images at."""
+    output_height: Optional[int] = None
+    """Height to crop the output images at."""
+    output_width: Optional[int] = None
+    """Width to crop the output images at."""
+
+    shift: Tuple[float, float, float] = (0, 0, 0)
+    """Shift to apply to the camera pose."""
+    calculate_and_save_metrics: bool = False
+    """Whether to calculate and save metrics."""
+    metrics_filename: Path = Path("metrics.pkl")
+    """Filename to save the metrics to."""
 
     def main(self):
         config: TrainerConfig
 
         def update_config(config: TrainerConfig) -> TrainerConfig:
+            config = streamline_ad_config(config)
             data_manager_config = config.pipeline.datamanager
             assert isinstance(data_manager_config, (VanillaDataManagerConfig, FullImageDatamanagerConfig))
             data_manager_config.eval_num_images_to_sample_from = -1
@@ -727,9 +901,13 @@ class DatasetRender(BaseRender):
                 data_manager_config.train_num_times_to_repeat_images = -1
             if self.data is not None:
                 data_manager_config.data = self.data
+            if self.config_output_dir is not None:
+                config.output_dir = self.config_output_dir
             if self.downscale_factor is not None:
                 assert hasattr(data_manager_config.dataparser, "downscale_factor")
                 setattr(data_manager_config.dataparser, "downscale_factor", self.downscale_factor)
+            # Remove any frame limit on the the dataparser
+            config.pipeline.datamanager.dataparser.max_eval_frames = None
             return config
 
         config, pipeline, _, _ = eval_setup(
@@ -737,11 +915,15 @@ class DatasetRender(BaseRender):
             eval_num_rays_per_chunk=self.eval_num_rays_per_chunk,
             test_mode="inference",
             update_config_callback=update_config,
+            strict_load=self.strict_load,
+            ignore_keys=self.load_ignore_keys,
         )
         data_manager_config = config.pipeline.datamanager
         assert isinstance(data_manager_config, (VanillaDataManagerConfig, FullImageDatamanagerConfig))
 
-        for split in self.split.split("+"):
+        self.output_path.mkdir(exist_ok=True, parents=True)
+        metrics_out = dict()
+        for split in self.pose_source.split("+"):
             datamanager: VanillaDataManager
             dataset: Dataset
             if split == "train":
@@ -758,8 +940,27 @@ class DatasetRender(BaseRender):
                 dataparser_outputs = getattr(dataset, "_dataparser_outputs", None)
                 if dataparser_outputs is None:
                     dataparser_outputs = datamanager.dataparser.get_dataparser_outputs(split=datamanager.test_split)
+            dataset.cameras.height = (
+                torch.full_like(dataset.cameras.height, self.render_height)
+                if self.render_height is not None
+                else dataset.cameras.height
+            )
+            dataset.cameras.width = (
+                torch.full_like(dataset.cameras.width, self.render_width)
+                if self.render_width is not None
+                else dataset.cameras.width
+            )
+            shift_relative_to_cam = torch.tensor(self.shift, dtype=torch.float32)
+            # add homogenous point
+            shift_relative_to_cam = torch.cat([shift_relative_to_cam, torch.tensor([1.0], dtype=torch.float32)])
+            shift_relative_to_cam = shift_relative_to_cam.to(dataset.cameras.camera_to_worlds.device)
+            # shift the camera poses
+            dataset.cameras.camera_to_worlds[..., :3, 3:4] = (
+                dataset.cameras.camera_to_worlds @ shift_relative_to_cam.reshape(1, 4, 1)
+            )
+
             dataloader = FixedIndicesEvalDataloader(
-                input_dataset=dataset,
+                dataset=dataset,
                 device=datamanager.device,
                 num_workers=datamanager.world_size * 4,
             )
@@ -776,8 +977,32 @@ class DatasetRender(BaseRender):
                 TimeElapsedColumn(),
             ) as progress:
                 for camera_idx, (camera, batch) in enumerate(progress.track(dataloader, total=len(dataset))):
+                    # Try to get the original filename
+                    image_name = (
+                        Path(dataparser_outputs.image_filenames[camera_idx]).with_suffix("").relative_to(images_root)
+                    )
+
                     with torch.no_grad():
                         outputs = pipeline.model.get_outputs_for_camera(camera)
+
+                    if self.output_height is not None:
+                        dataset.cameras.height[batch["image_idx"]] = torch.full_like(
+                            dataset.cameras.height[0:1], self.output_height
+                        )
+                        batch["image"] = batch["image"][..., : self.output_height, :, :]
+                        outputs["rgb"] = outputs["rgb"][..., : self.output_height, :, :]
+
+                    if self.output_width is not None:
+                        dataset.cameras.width[batch["image_idx"]] = torch.full_like(
+                            dataset.cameras.width[0:1], self.output_width
+                        )
+                        batch["image"] = batch["image"][..., : self.output_width, :]
+                        outputs["rgb"] = outputs["rgb"][..., : self.output_width, :]
+
+                    if self.calculate_and_save_metrics:
+                        with torch.no_grad():
+                            metrics_dict, _ = pipeline.model.get_image_metrics_and_images(outputs, batch)
+                            metrics_out[str(image_name)] = metrics_dict
 
                     gt_batch = batch.copy()
                     gt_batch["rgb"] = gt_batch.pop("image")
@@ -788,8 +1013,10 @@ class DatasetRender(BaseRender):
                         + [f"raw-gt-{x}" for x in gt_batch.keys()]
                     )
                     rendered_output_names = self.rendered_output_names
-                    if rendered_output_names is None:
+                    if "all" in rendered_output_names:
                         rendered_output_names = ["gt-rgb"] + list(outputs.keys())
+                    elif rendered_output_names == ["none"]:
+                        rendered_output_names = []
                     for rendered_output_name in rendered_output_names:
                         if rendered_output_name not in all_outputs:
                             CONSOLE.rule("Error", style="red")
@@ -803,10 +1030,6 @@ class DatasetRender(BaseRender):
 
                         is_raw = False
                         is_depth = rendered_output_name.find("depth") != -1
-                        image_name = f"{camera_idx:05d}"
-
-                        # Try to get the original filename
-                        image_name = dataparser_outputs.image_filenames[camera_idx].relative_to(images_root)
 
                         output_path = self.output_path / split / rendered_output_name / image_name
                         output_path.parent.mkdir(exist_ok=True, parents=True)
@@ -857,17 +1080,37 @@ class DatasetRender(BaseRender):
                             )
 
                         # Save to file
+                        height = (
+                            min(output_image.shape[0], self.output_height)
+                            if self.output_height
+                            else output_image.shape[0]
+                        )
+                        width = (
+                            min(output_image.shape[1], self.output_width)
+                            if self.output_width
+                            else output_image.shape[1]
+                        )
+                        output_image = output_image[:height, :width]
                         if is_raw:
-                            with gzip.open(output_path.with_suffix(".npy.gz"), "wb") as f:
+                            with gzip.open(output_path.parent / (output_path.name + ".npy.gz"), "wb") as f:
                                 np.save(f, output_image)
                         elif self.image_format == "png":
-                            media.write_image(output_path.with_suffix(".png"), output_image, fmt="png")
+                            media.write_image(output_path.parent / (output_path.name + ".png"), output_image, fmt="png")
                         elif self.image_format == "jpeg":
                             media.write_image(
-                                output_path.with_suffix(".jpg"), output_image, fmt="jpeg", quality=self.jpeg_quality
+                                output_path.parent / (output_path.name + ".jpg"),
+                                output_image,
+                                fmt="jpeg",
+                                quality=self.jpeg_quality,
                             )
                         else:
                             raise ValueError(f"Unknown image format {self.image_format}")
+
+        if self.calculate_and_save_metrics:
+            metrics_out_path = Path(self.output_path, self.metrics_filename)
+            with open(metrics_out_path, "wb") as f:
+                pickle.dump(metrics_out, f)
+            CONSOLE.print(f"[bold][green]:glowing_star: Metrics saved to {metrics_out_path}")
 
         table = Table(
             title=None,
@@ -875,9 +1118,18 @@ class DatasetRender(BaseRender):
             box=box.MINIMAL,
             title_style=style.Style(bold=True),
         )
-        for split in self.split.split("+"):
+        for split in self.pose_source.split("+"):
             table.add_row(f"Outputs {split}", str(self.output_path / split))
         CONSOLE.print(Panel(table, title="[bold][green]:tada: Render on split {} Complete :tada:[/bold]", expand=False))
+
+
+def streamline_ad_config(config):
+    if getattr(config.pipeline.datamanager, "num_processes", None):
+        config.pipeline.datamanager.num_processes = 0
+    config.pipeline.model.eval_num_rays_per_chunk = 2**17
+    if getattr(config.pipeline.datamanager.dataparser, "add_missing_points", None):
+        config.pipeline.datamanager.dataparser.add_missing_points = False
+    return config
 
 
 Commands = tyro.conf.FlagConversionOff[

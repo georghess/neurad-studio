@@ -1,0 +1,78 @@
+Bootstrap: docker
+From: nvidia/cuda:11.8.0-devel-ubuntu22.04
+Stage: spython-base
+
+%files
+. /nerfstudio
+%labels
+org.opencontainers.image.version = "0.1.18"
+org.opencontainers.image.source = "https://github.com/nerfstudio-project/nerfstudio"
+org.opencontainers.image.licenses = "Apache License 2.0"
+org.opencontainers.image.base.name = "docker.io/library/nvidia/cuda:11.8.0-devel-ubuntu22.04"
+%post
+
+# Install required apt packages and clear cache afterwards.
+DEBIAN_FRONTEND=noninteractive TZ=Europe/Berlin apt-get update && \
+apt-get install -y --no-install-recommends \
+build-essential \
+cmake \
+curl \
+ffmpeg \
+git \
+libatlas-base-dev \
+libboost-filesystem-dev \
+libboost-graph-dev \
+libboost-program-options-dev \
+libboost-system-dev \
+libboost-test-dev \
+libhdf5-dev \
+libcgal-dev \
+libeigen3-dev \
+libflann-dev \
+libfreeimage-dev \
+libgflags-dev \
+libglew-dev \
+libgoogle-glog-dev \
+libmetis-dev \
+libprotobuf-dev \
+libqt5opengl5-dev \
+libsqlite3-dev \
+libsuitesparse-dev \
+protobuf-compiler \
+python-is-python3 \
+python3.10-dev \
+python3-pip \
+qtbase5-dev \
+wget \
+&& \
+rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip and install packages.
+python3.10 -m pip install --no-cache-dir --upgrade pip setuptools pathtools promise pybind11
+# Install pytorch and submodules
+python3.10 -m pip install --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+# Install tinyCUDNN (we need to set the target architectures as environment variable first).
+TCNN_CUDA_ARCHITECTURES="90;89;86;80;75" python3.10 -m pip install --no-cache-dir git+https://github.com/NVlabs/tiny-cuda-nn.git@v1.6#subdirectory=bindings/torch
+
+# Install nerfstudio dependencies.
+cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .
+
+# Change working directory
+mkdir -p /workspace
+cd /workspace
+
+# Install nerfstudio cli auto completion
+ns-install-cli --mode install
+
+# Bash as default entrypoint.
+%environment
+export DEBIAN_FRONTEND=noninteractive
+export TZ=Europe/Berlin
+export CUDA_HOME="/usr/local/cuda"
+export TCNN_CUDA_ARCHITECTURES="90;89;86;80;75"
+%runscript
+cd /workspace
+exec /bin/bash /bin/bash -l "$@"
+%startscript
+cd /workspace
+exec /bin/bash /bin/bash -l "$@"

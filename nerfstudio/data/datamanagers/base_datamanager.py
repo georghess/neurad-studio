@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,8 +53,7 @@ from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.configs.dataparser_configs import AnnotatedDataParserUnion
-from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
-from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
+from nerfstudio.data.dataparsers.base_dataparser import DataParserConfig, DataparserOutputs
 from nerfstudio.data.datasets.base_dataset import InputDataset
 from nerfstudio.data.pixel_samplers import PatchPixelSamplerConfig, PixelSampler, PixelSamplerConfig
 from nerfstudio.data.utils.dataloaders import CacheDataloader, FixedIndicesEvalDataloader, RandIndicesEvalDataloader
@@ -177,9 +177,9 @@ class DataManager(nn.Module):
         super().__init__()
         self.train_count = 0
         self.eval_count = 0
-        if self.train_dataset and self.test_mode != "inference":
+        if self.train_dataset is not None and self.test_mode != "inference":
             self.setup_train()
-        if self.eval_dataset and self.test_mode != "inference":
+        if self.eval_dataset is not None and self.test_mode != "inference":
             self.setup_eval()
 
     def forward(self):
@@ -302,6 +302,11 @@ class DataManager(nn.Module):
         """
         return {}
 
+    @abstractmethod
+    def get_num_train_data(self) -> int:
+        """Get the number of training datapoints (e.g. images)."""
+        return 0
+
 
 @dataclass
 class VanillaDataManagerConfig(DataManagerConfig):
@@ -309,7 +314,7 @@ class VanillaDataManagerConfig(DataManagerConfig):
 
     _target: Type = field(default_factory=lambda: VanillaDataManager)
     """Target class to instantiate."""
-    dataparser: AnnotatedDataParserUnion = field(default_factory=BlenderDataParserConfig)
+    dataparser: AnnotatedDataParserUnion = field(default_factory=DataParserConfig)
     """Specifies the dataparser used to unpack the data."""
     train_num_rays_per_batch: int = 1024
     """Number of rays per batch to use per training iteration."""
@@ -517,12 +522,12 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
         self.eval_ray_generator = RayGenerator(self.eval_dataset.cameras.to(self.device))
         # for loading full images
         self.fixed_indices_eval_dataloader = FixedIndicesEvalDataloader(
-            input_dataset=self.eval_dataset,
+            dataset=self.eval_dataset,
             device=self.device,
             num_workers=self.world_size * 4,
         )
         self.eval_dataloader = RandIndicesEvalDataloader(
-            input_dataset=self.eval_dataset,
+            dataset=self.eval_dataset,
             device=self.device,
             num_workers=self.world_size * 4,
         )
@@ -573,4 +578,10 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
         Returns:
             A list of dictionaries containing the data manager's param groups.
         """
-        return {}
+        param_groups = {}
+
+        return param_groups
+
+    def get_num_train_data(self) -> int:
+        """Get the number of training datapoints (e.g. images)."""
+        return len(self.train_dataset.cameras)

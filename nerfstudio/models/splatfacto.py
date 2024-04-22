@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # ruff: noqa: E741
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
@@ -20,6 +21,7 @@ NeRF implementation that combines many recent advancements.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Type, Union
 
@@ -120,6 +122,8 @@ class SplatfactoModelConfig(ModelConfig):
     """whether to initialize the positions uniformly randomly (not SFM points)"""
     num_random: int = 50000
     """Number of gaussians to initialize if random init is used"""
+    max_num_seed_points: int = -1
+    """Maximum number of seed points to use for initialization. -1 means all seed points are used."""
     random_scale: float = 10.0
     "Size of the cube to initialize random gaussians within"
     ssim_lambda: float = 0.2
@@ -167,6 +171,14 @@ class SplatfactoModel(Model):
         super().__init__(*args, **kwargs)
 
     def populate_modules(self):
+        if self.seed_points is not None and self.config.max_num_seed_points > 0:
+            n_seed_points = self.seed_points[0].shape[0]
+            perm_idx = torch.randperm(n_seed_points)
+            self.seed_points = (
+                self.seed_points[0][perm_idx][: self.config.max_num_seed_points],
+                self.seed_points[1][perm_idx][: self.config.max_num_seed_points],
+            )
+
         if self.seed_points is not None and not self.config.random_init:
             means = torch.nn.Parameter(self.seed_points[0])  # (Location, Color)
         else:
@@ -826,6 +838,12 @@ class SplatfactoModel(Model):
         gt_rgb = self.composite_with_background(self.get_gt_img(batch["image"]), outputs["background"])
         metrics_dict = {}
         predicted_rgb = outputs["rgb"]
+        # slice gt_rgb to same shape as predicted_rgb
+        if not gt_rgb.shape[:2] == predicted_rgb.shape[:2]:
+            gt_rgb = gt_rgb[: predicted_rgb.shape[0], : predicted_rgb.shape[1], :]
+            # raise user warning
+            warnings.warn("GT image and predicted image have different shapes. Cropping GT image to match.")
+
         metrics_dict["psnr"] = self.psnr(predicted_rgb, gt_rgb)
 
         metrics_dict["gaussian_count"] = self.num_points
@@ -841,6 +859,10 @@ class SplatfactoModel(Model):
         """
         gt_img = self.composite_with_background(self.get_gt_img(batch["image"]), outputs["background"])
         pred_img = outputs["rgb"]
+        if not gt_img.shape[:2] == pred_img.shape[:2]:
+            gt_img = gt_img[: pred_img.shape[0], : pred_img.shape[1], :]
+            # raise user warning
+            warnings.warn("GT image and predicted image have different shapes. Cropping GT image to match.")
 
         # Set masked part of both ground-truth and rendered image to black.
         # This is a little bit sketchy for the SSIM loss.
@@ -909,6 +931,12 @@ class SplatfactoModel(Model):
             predicted_rgb = TF.resize(outputs["rgb"].permute(2, 0, 1), newsize, antialias=None).permute(1, 2, 0)
         else:
             predicted_rgb = outputs["rgb"]
+
+        # slice gt_rgb to same shape as predicted_rgb
+        if not gt_rgb.shape[:2] == predicted_rgb.shape[:2]:
+            gt_rgb = gt_rgb[: predicted_rgb.shape[0], : predicted_rgb.shape[1], :]
+            # raise user warning
+            warnings.warn("GT image and predicted image have different shapes. Cropping GT image to match.")
 
         combined_rgb = torch.cat([gt_rgb, predicted_rgb], dim=1)
 

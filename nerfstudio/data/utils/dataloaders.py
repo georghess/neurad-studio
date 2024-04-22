@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,8 +30,10 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 
 from nerfstudio.cameras.cameras import Cameras
+from nerfstudio.cameras.lidars import Lidars
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.data.datasets.base_dataset import InputDataset
+from nerfstudio.data.datasets.lidar_dataset import LidarDataset
 from nerfstudio.data.utils.nerfstudio_collate import nerfstudio_collate
 from nerfstudio.utils.misc import get_dict_to_torch
 from nerfstudio.utils.rich_utils import CONSOLE
@@ -150,21 +153,24 @@ class EvalDataloader(DataLoader):
     """Evaluation dataloader base class
 
     Args:
-        input_dataset: InputDataset to load data from
+        dataset: InputDataset to load data from
         device: Device to load data to
     """
 
     def __init__(
         self,
-        input_dataset: InputDataset,
+        dataset: Union[InputDataset, LidarDataset],
         device: Union[torch.device, str] = "cpu",
         **kwargs,
     ):
-        self.input_dataset = input_dataset
-        self.cameras = input_dataset.cameras.to(device)
+        self.dataset = dataset
+        if isinstance(dataset, InputDataset):
+            self.sensors = dataset.cameras.to(device)
+        else:
+            self.sensors = dataset.lidars.to(device)
         self.device = device
         self.kwargs = kwargs
-        super().__init__(dataset=input_dataset)
+        super().__init__(dataset=dataset)
 
     @abstractmethod
     def __iter__(self):
@@ -175,17 +181,17 @@ class EvalDataloader(DataLoader):
     def __next__(self) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data"""
 
-    def get_camera(self, image_idx: int = 0) -> Tuple[Cameras, Dict]:
+    def get_camera(self, image_idx: int = 0) -> Tuple[Union[Cameras, Lidars], Dict]:
         """Get camera for the given image index
 
         Args:
             image_idx: Camera image index
         """
-        camera = self.cameras[image_idx : image_idx + 1]
-        batch = self.input_dataset[image_idx]
+        sensor = self.sensors[image_idx : image_idx + 1]
+        batch = self.dataset[image_idx]
         batch = get_dict_to_torch(batch, device=self.device, exclude=["image"])
         assert isinstance(batch, dict)
-        return camera, batch
+        return sensor, batch
 
     def get_data_from_image_idx(self, image_idx: int) -> Tuple[RayBundle, Dict]:
         """Returns the data for a specific image index.
@@ -193,8 +199,15 @@ class EvalDataloader(DataLoader):
         Args:
             image_idx: Camera image index
         """
-        ray_bundle = self.cameras.generate_rays(camera_indices=image_idx, keep_shape=True)
-        batch = self.input_dataset[image_idx]
+        if isinstance(self.dataset, InputDataset):
+            ray_bundle = self.sensors.generate_rays(image_idx, keep_shape=True)
+        elif isinstance(self.dataset, LidarDataset):
+            point_cloud = self.dataset.point_clouds[image_idx]
+            lidar_idx = torch.full((point_cloud.shape[0], 1), image_idx, dtype=torch.int64, device=self.device)
+            ray_bundle = self.sensors.generate_rays(lidar_idx, points=point_cloud)
+        else:
+            raise NotImplementedError(f"Dataset type {type(self.dataset)} not supported.")
+        batch = self.dataset[image_idx]
         batch = get_dict_to_torch(batch, device=self.device, exclude=["image"])
         assert isinstance(batch, dict)
         return ray_bundle, batch
@@ -204,21 +217,21 @@ class FixedIndicesEvalDataloader(EvalDataloader):
     """Dataloader that returns a fixed set of indices.
 
     Args:
-        input_dataset: InputDataset to load data from
+        dataset: InputDataset to load data from
         image_indices: List of image indices to load data from. If None, then use all images.
         device: Device to load data to
     """
 
     def __init__(
         self,
-        input_dataset: InputDataset,
+        dataset: Union[InputDataset, LidarDataset],
         image_indices: Optional[Tuple[int]] = None,
         device: Union[torch.device, str] = "cpu",
         **kwargs,
     ):
-        super().__init__(input_dataset, device, **kwargs)
+        super().__init__(dataset, device, **kwargs)
         if image_indices is None:
-            self.image_indices = list(range(len(input_dataset)))
+            self.image_indices = list(range(len(dataset)))
         else:
             self.image_indices = image_indices
         self.count = 0
@@ -239,7 +252,7 @@ class FixedIndicesEvalDataloader(EvalDataloader):
 class RandIndicesEvalDataloader(EvalDataloader):
     """Dataloader that returns random images.
     Args:
-        input_dataset: InputDataset to load data from
+        dataset: InputDataset to load data from
         device: Device to load data to
     """
 
@@ -248,6 +261,5 @@ class RandIndicesEvalDataloader(EvalDataloader):
 
     def __next__(self):
         # choose a random image index
-        image_idx = random.randint(0, len(self.cameras) - 1)
-        camera, batch = self.get_camera(image_idx)
-        return camera, batch
+        image_idx = random.randint(0, len(self.sensors) - 1)
+        return self.get_camera(image_idx)

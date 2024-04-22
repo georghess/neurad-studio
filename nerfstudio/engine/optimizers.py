@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +67,15 @@ class RAdamOptimizerConfig(OptimizerConfig):
     """Basic optimizer config with RAdam"""
 
     _target: Type = torch.optim.RAdam
+    weight_decay: float = 0
+    """The weight decay to use."""
+
+
+@dataclass
+class AdamWOptimizerConfig(OptimizerConfig):
+    """Basic optimizer config with Adam"""
+
+    _target: Type = torch.optim.AdamW
     weight_decay: float = 0
     """The weight decay to use."""
 

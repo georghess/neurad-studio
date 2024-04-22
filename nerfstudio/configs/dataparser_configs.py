@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,40 +21,22 @@ from typing import TYPE_CHECKING
 
 import tyro
 
-from nerfstudio.data.dataparsers.arkitscenes_dataparser import ARKitScenesDataParserConfig
+from nerfstudio.data.dataparsers.argoverse2_dataparser import Argoverse2DataParserConfig
 from nerfstudio.data.dataparsers.base_dataparser import DataParserConfig
-from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
-from nerfstudio.data.dataparsers.colmap_dataparser import ColmapDataParserConfig
-from nerfstudio.data.dataparsers.dnerf_dataparser import DNeRFDataParserConfig
-from nerfstudio.data.dataparsers.dycheck_dataparser import DycheckDataParserConfig
-from nerfstudio.data.dataparsers.instant_ngp_dataparser import InstantNGPDataParserConfig
+from nerfstudio.data.dataparsers.kittimot_dataparser import KittiMotDataParserConfig
 from nerfstudio.data.dataparsers.minimal_dataparser import MinimalDataParserConfig
-from nerfstudio.data.dataparsers.nerfosr_dataparser import NeRFOSRDataParserConfig
-from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
 from nerfstudio.data.dataparsers.nuscenes_dataparser import NuScenesDataParserConfig
-from nerfstudio.data.dataparsers.phototourism_dataparser import PhototourismDataParserConfig
-from nerfstudio.data.dataparsers.scannet_dataparser import ScanNetDataParserConfig
-from nerfstudio.data.dataparsers.scannetpp_dataparser import ScanNetppDataParserConfig
-from nerfstudio.data.dataparsers.sdfstudio_dataparser import SDFStudioDataParserConfig
-from nerfstudio.data.dataparsers.sitcoms3d_dataparser import Sitcoms3DDataParserConfig
+from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
+from nerfstudio.data.dataparsers.zod_dataparser import ZodDataParserConfig
 from nerfstudio.plugins.registry_dataparser import discover_dataparsers
 
 dataparsers = {
-    "nerfstudio-data": NerfstudioDataParserConfig(),
     "minimal-parser": MinimalDataParserConfig(),
-    "arkit-data": ARKitScenesDataParserConfig(),
-    "blender-data": BlenderDataParserConfig(),
-    "instant-ngp-data": InstantNGPDataParserConfig(),
+    "kittimot-data": KittiMotDataParserConfig(),
     "nuscenes-data": NuScenesDataParserConfig(),
-    "dnerf-data": DNeRFDataParserConfig(),
-    "phototourism-data": PhototourismDataParserConfig(),
-    "dycheck-data": DycheckDataParserConfig(),
-    "scannet-data": ScanNetDataParserConfig(),
-    "sdfstudio-data": SDFStudioDataParserConfig(),
-    "nerfosr-data": NeRFOSRDataParserConfig(),
-    "sitcoms3d-data": Sitcoms3DDataParserConfig(),
-    "scannetpp-data": ScanNetppDataParserConfig(),
-    "colmap": ColmapDataParserConfig(),
+    "argoverse2-data": Argoverse2DataParserConfig(),
+    "zod-data": ZodDataParserConfig(),
+    "pandaset-data": PandaSetDataParserConfig(),
 }
 
 external_dataparsers, _ = discover_dataparsers()

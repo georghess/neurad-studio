@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,13 +18,13 @@ Some ray datastructures.
 """
 import random
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Literal, Optional, Tuple, Union, overload
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union, overload
 
 import torch
 from jaxtyping import Float, Int, Shaped
 from torch import Tensor
 
-from nerfstudio.utils.math import Gaussians, conical_frustum_to_gaussian
+from nerfstudio.utils.math import Gaussians, GaussiansStd, conical_frustum_to_gaussian, multisampled_frustum_to_gaussian
 from nerfstudio.utils.tensor_dataclass import TensorDataclass
 
 TORCH_DEVICE = Union[str, torch.device]
@@ -69,14 +70,14 @@ class Frustums(TensorDataclass):
         """Sets offsets for this frustum for computing positions"""
         self.offsets = offsets
 
-    def get_gaussian_blob(self) -> Gaussians:
+    def get_conical_gaussian_blob(self) -> Gaussians:
         """Calculates guassian approximation of conical frustum.
 
         Returns:
             Conical frustums approximated by gaussian distribution.
         """
         # Cone radius is set such that the square pixel_area matches the cone area.
-        cone_radius = torch.sqrt(self.pixel_area) / 1.7724538509055159  # r = sqrt(pixel_area / pi)
+        cone_radius = torch.sqrt(self.pixel_area / torch.pi)
         if self.offsets is not None:
             raise NotImplementedError()
         return conical_frustum_to_gaussian(
@@ -87,6 +88,41 @@ class Frustums(TensorDataclass):
             radius=cone_radius,
         )
 
+    def get_multisampled_gaussian_blob(self, rand: bool = False) -> GaussiansStd:
+        """Calculates Gaussian approximation of conical frustum via multisampling.
+        Returns:
+            Conical frustums approximated by multisampled gaussian distribution.
+        """
+        # Cone radius is set such that the square pixel_area matches the cone area.
+        cone_radius = torch.sqrt(self.pixel_area / torch.pi)
+        if self.offsets is not None:
+            raise NotImplementedError()
+        return multisampled_frustum_to_gaussian(
+            origins=self.origins,
+            directions=self.directions,
+            starts=self.starts,
+            ends=self.ends,
+            radius=cone_radius,
+            rand=rand,
+        )
+
+    def get_fast_isotropic_gaussian(self, num_multisamples: int) -> GaussiansStd:
+        """This is a sloppy but very fast approximation of the gaussian blob.
+
+        Args:
+            num_multisamples: Number of samples to use for the gaussian blob.
+
+        """
+        if self.offsets is not None:
+            raise NotImplementedError()
+        multisample_dist = (self.ends - self.starts) / (num_multisamples + 1)
+        ts = torch.arange(1, num_multisamples + 1, device=self.ends.device, dtype=self.ends.dtype)
+        t = self.starts + ts.unsqueeze(0) * multisample_dist
+        mean = self.origins.unsqueeze(-2) + self.directions.unsqueeze(-2) * t.unsqueeze(-1)
+        frust_crossection_area = self.pixel_area.unsqueeze(-2) * t.unsqueeze(-1).pow(2)
+        std = (frust_crossection_area * multisample_dist.unsqueeze(-2)).pow(1 / 3)  # TODO: * 0.5?
+        return GaussiansStd(mean=mean, std=std)
+
     @classmethod
     def get_mock_frustum(cls, device: Optional[TORCH_DEVICE] = "cpu") -> "Frustums":
         """Helper function to generate a placeholder frustum.
@@ -95,11 +131,11 @@ class Frustums(TensorDataclass):
             A size 1 frustum with meaningless values.
         """
         return Frustums(
-            origins=torch.ones((1, 3)).to(device),
-            directions=torch.ones((1, 3)).to(device),
-            starts=torch.ones((1, 1)).to(device),
-            ends=torch.ones((1, 1)).to(device),
-            pixel_area=torch.ones((1, 1)).to(device),
+            origins=torch.ones((1, 3), device=device),
+            directions=torch.ones((1, 3), device=device),
+            starts=torch.ones((1, 1), device=device),
+            ends=torch.ones((1, 1), device=device),
+            pixel_area=torch.ones((1, 1), device=device),
         )
 
 
@@ -121,9 +157,33 @@ class RaySamples(TensorDataclass):
     """Function to convert bins to euclidean distance."""
     metadata: Optional[Dict[str, Shaped[Tensor, "*bs latent_dims"]]] = None
     """additional information relevant to generating ray samples"""
-
     times: Optional[Float[Tensor, "*batch 1"]] = None
     """Times at which rays are sampled"""
+
+    def __init__(
+        self,
+        frustums: Frustums,
+        camera_indices: Optional[Int[Tensor, "*bs 1"]] = None,
+        deltas: Optional[Float[Tensor, "*bs 1"]] = None,
+        spacing_starts: Optional[Float[Tensor, "*bs num_samples 1"]] = None,
+        spacing_ends: Optional[Float[Tensor, "*bs num_samples 1"]] = None,
+        spacing_to_euclidean_fn: Optional[Callable] = None,
+        metadata: Optional[Dict[str, Shaped[Tensor, "*bs latent_dims"]]] = None,
+        times: Optional[Float[Tensor, "*batch 1"]] = None,
+    ) -> None:
+        # This will notify the tensordataclass that we have a field with more than 1 dimension
+        self._field_custom_dimensions = {"world2box": 2}
+
+        self.frustums = frustums
+        self.camera_indices = camera_indices
+        self.deltas = deltas
+        self.spacing_starts = spacing_starts
+        self.spacing_ends = spacing_ends
+        self.spacing_to_euclidean_fn = spacing_to_euclidean_fn
+        self.metadata = metadata
+        self.times = times
+
+        self.__post_init__()
 
     def get_weights(self, densities: Float[Tensor, "*batch num_samples 1"]) -> Float[Tensor, "*batch num_samples 1"]:
         """Return weights based on predicted densities
@@ -209,6 +269,8 @@ class RayBundle(TensorDataclass):
     """Additional metadata or data needed for interpolation, will mimic shape of rays"""
     times: Optional[Float[Tensor, "*batch 1"]] = None
     """Times at which rays are sampled"""
+    termination_distances: Optional[Float[Tensor, "*batch 1"]] = None
+    """Distance along ray where ray is measured to terminate. -1 if unknown and inf if ray does not terminate."""
 
     def set_camera_indices(self, camera_index: int) -> None:
         """Sets all the camera indices to a specific camera index.
@@ -293,3 +355,39 @@ class RayBundle(TensorDataclass):
         )
 
         return ray_samples
+
+
+@overload
+def merge_raysamples(ray_samples: List[RaySamples], sort: Literal[True]) -> Tuple[RaySamples, Int[Tensor, "num_rays"]]:
+    ...
+
+
+@overload
+def merge_raysamples(ray_samples: List[RaySamples], sort: Literal[False]) -> RaySamples:
+    ...
+
+
+def merge_raysamples(
+    ray_samples: List[RaySamples], sort: bool = False
+) -> Union[RaySamples, Tuple[RaySamples, Int[Tensor, "num_rays"]]]:
+    """Merges two RaySamples objects, and make sure rays are nicely packed."""
+    assert len(ray_samples[0].shape) == 1, "This function is overkill for batched ray samples, use .cat() instead."
+    merged = ray_samples[0].cat(
+        ray_samples[1:], dim=0, ignore_fields={"spacing_to_euclidean_fn", "spacing_starts", "spacing_ends"}
+    )
+    assert merged.metadata is not None and "ray_indices" in merged.metadata, "metadata must contain ray_indices"
+
+    if sort:
+        if merged.frustums.ends.device.type == "mps":
+            ends = merged.frustums.ends.cpu().double()
+            ray_indices = merged.metadata["ray_indices"].cpu()
+        else:
+            ends = merged.frustums.ends.double()
+            ray_indices = merged.metadata["ray_indices"]
+        score = ray_indices + (ends / (ends.max() + 1.0))
+        sorting = torch.argsort(score[..., 0], dim=0)
+        if merged.frustums.ends.device.type == "mps":
+            sorting.to(merged.frustums.ends.device)
+        return merged[sorting], sorting
+    else:
+        return merged

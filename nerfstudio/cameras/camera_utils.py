@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +22,7 @@ from typing import List, Literal, Optional, Tuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from jaxtyping import Float
 from numpy.typing import NDArray
 from torch import Tensor
@@ -45,6 +47,96 @@ def unit_vector(data: NDArray, axis: Optional[int] = None) -> np.ndarray:
         length = np.expand_dims(length, axis)
     data /= length
     return data
+
+
+# from https://github.com/naver/roma/blob/0da38a34f36c0c917c0a15ea36eee561c6096719/roma/mappings.py#L329
+def rotmat_to_unitquat(R):
+    """
+    Converts rotation matrix to unit quaternion representation.
+
+    Args:
+        R (...x3x3 tensor): batch of rotation matrices.
+    Returns:
+        batch of unit quaternions (...x4 tensor, XYZW convention).
+    """
+    batch_shape = R.shape[:-2]
+    matrix = R.reshape((-1, 3, 3))
+    num_rotations, D1, D2 = matrix.shape
+    assert (D1, D2) == (3, 3), "Input should be a Bx3x3 tensor."
+
+    # Adapted from SciPy:
+    # https://github.com/scipy/scipy/blob/7cb3d751756907238996502b92709dc45e1c6596/scipy/spatial/transform/rotation.py#L480
+
+    decision_matrix = torch.empty((num_rotations, 4), dtype=matrix.dtype, device=matrix.device)
+    decision_matrix[:, :3] = matrix.diagonal(dim1=1, dim2=2)
+    decision_matrix[:, -1] = decision_matrix[:, :3].sum(dim=1)
+    choices = decision_matrix.argmax(dim=1)
+
+    quat = torch.empty((num_rotations, 4), dtype=matrix.dtype, device=matrix.device)
+
+    ind = torch.nonzero(choices != 3, as_tuple=True)[0]
+    i = choices[ind]
+    j = (i + 1) % 3
+    k = (j + 1) % 3
+
+    quat[ind, i] = 1 - decision_matrix[ind, -1] + 2 * matrix[ind, i, i]
+    quat[ind, j] = matrix[ind, j, i] + matrix[ind, i, j]
+    quat[ind, k] = matrix[ind, k, i] + matrix[ind, i, k]
+    quat[ind, 3] = matrix[ind, k, j] - matrix[ind, j, k]
+
+    ind = torch.nonzero(choices == 3, as_tuple=True)[0]
+    quat[ind, 0] = matrix[ind, 2, 1] - matrix[ind, 1, 2]
+    quat[ind, 1] = matrix[ind, 0, 2] - matrix[ind, 2, 0]
+    quat[ind, 2] = matrix[ind, 1, 0] - matrix[ind, 0, 1]
+    quat[ind, 3] = 1 + decision_matrix[ind, -1]
+
+    quat = quat / torch.norm(quat, dim=1)[:, None]
+    return quat.reshape(batch_shape + (4,))
+
+
+def unitquat_to_rotmat(quat):
+    """
+    Converts unit quaternion into rotation matrix representation.
+
+    Args:
+        quat (...x4 tensor, XYZW convention): batch of unit quaternions.
+            No normalization is applied before computation.
+    Returns:
+        batch of rotation matrices (...x3x3 tensor).
+    """
+    # Adapted from SciPy:
+    # https://github.com/scipy/scipy/blob/adc4f4f7bab120ccfab9383aba272954a0a12fb0/scipy/spatial/transform/rotation.py#L912
+    x = quat[..., 0]
+    y = quat[..., 1]
+    z = quat[..., 2]
+    w = quat[..., 3]
+
+    x2 = x * x
+    y2 = y * y
+    z2 = z * z
+    w2 = w * w
+
+    xy = x * y
+    zw = z * w
+    xz = x * z
+    yw = y * w
+    yz = y * z
+    xw = x * w
+
+    matrix = torch.empty(quat.shape[:-1] + (3, 3), dtype=quat.dtype, device=quat.device)
+
+    matrix[..., 0, 0] = x2 - y2 - z2 + w2
+    matrix[..., 1, 0] = 2 * (xy + zw)
+    matrix[..., 2, 0] = 2 * (xz - yw)
+
+    matrix[..., 0, 1] = 2 * (xy - zw)
+    matrix[..., 1, 1] = -x2 + y2 - z2 + w2
+    matrix[..., 2, 1] = 2 * (yz + xw)
+
+    matrix[..., 0, 2] = 2 * (xz + yw)
+    matrix[..., 1, 2] = 2 * (yz - xw)
+    matrix[..., 2, 2] = -x2 - y2 + z2 + w2
+    return matrix
 
 
 def quaternion_from_matrix(matrix: NDArray, isprecise: bool = False) -> np.ndarray:
@@ -138,6 +230,172 @@ def quaternion_slerp(
     return q0
 
 
+# adapted from https://github.com/naver/roma/blob/0da38a34f36c0c917c0a15ea36eee561c6096719/roma/utils.py#L333
+def unitquat_slerp_fast(q0, q1, steps, shortest_arc=True):
+    """
+    Spherical linear interpolation between two unit quaternions.
+    This function requires less computations than :func:`roma.utils.unitquat_slerp`,
+    but is **unsuitable for extrapolation (i.e.** ``steps`` **must be within [0,1])**.
+
+    Args:
+        q0, q1 (Ax4 tensor): batch of unit quaternions (A may contain multiple dimensions).
+        steps (tensor of shape A): interpolation steps within 0.0 and 1.0, 0.0 corresponding to q0 and 1.0 to q1 (A may contain multiple dimensions).
+        shortest_arc (boolean): if True, interpolation will be performed along the shortest arc on SO(3) from `q0` to `q1` or `-q1`.
+    Returns:
+        batch of interpolated quaternions (BxAx4 tensor).
+    """
+    batch_shape = q0.shape[:-1]
+    q0 = q0.reshape((-1, 4))
+    batch_shape1 = q1.shape[:-1]
+    q1 = q1.reshape((-1, 4))
+
+    assert batch_shape == batch_shape1
+    assert batch_shape == steps.shape
+    # omega is the 'angle' between both quaternions
+    cos_omega = torch.sum(q0 * q1, dim=-1)
+    if shortest_arc:
+        # Flip some quaternions to perform shortest arc interpolation.
+        q1 = q1.clone()
+        q1[cos_omega < 0, :] = -q1[cos_omega < 0, :]
+        cos_omega = torch.abs(cos_omega)
+    # True when q0 and q1 are close.
+    nearby_quaternions = cos_omega > (1.0 - 1e-3)
+    nearby_quaternions_idx = nearby_quaternions.nonzero(as_tuple=True)[0]
+
+    # General approach
+    omega = torch.acos(cos_omega)
+    alpha = torch.sin((1 - steps) * omega)
+    beta = torch.sin(steps * omega)
+    # Use linear interpolation for nearby quaternions
+    alpha[nearby_quaternions_idx] = 1 - steps[nearby_quaternions_idx]
+    beta[nearby_quaternions_idx] = steps[nearby_quaternions_idx]
+    # Interpolation
+    q = alpha.unsqueeze(-1) * q0 + beta.unsqueeze(-1) * q1
+    # Normalization of the output
+    q = q / torch.norm(q, dim=-1, keepdim=True)
+    return q.reshape(batch_shape + (4,))
+
+
+def quat_product(p, q):
+    """
+    Returns the product of two quaternions.
+
+    Args:
+        p, q (...x4 tensor, XYZW convention): batch of quaternions.
+    Returns:
+        batch of quaternions (...x4 tensor, XYZW convention).
+    """
+    # Adapted from SciPy:
+    # https://github.com/scipy/scipy/blob/adc4f4f7bab120ccfab9383aba272954a0a12fb0/scipy/spatial/transform/rotation.py#L153
+
+    vector = p[..., None, 3] * q[..., :3] + q[..., None, 3] * p[..., :3] + torch.cross(p[..., :3], q[..., :3], dim=-1)
+    last = p[..., 3] * q[..., 3] - torch.sum(p[..., :3] * q[..., :3], dim=-1)
+    return torch.cat((vector, last[..., None]), dim=-1)
+
+
+def unitquat_to_rotvec(quat, shortest_arc=True):
+    """
+    Converts unit quaternion into rotation vector representation.
+
+    Based on the representation of a rotation of angle :math:`{\\theta}` and unit axis :math:`(x,y,z)`
+    by the unit quaternions :math:`\pm [\sin({\\theta} / 2) (x i + y j + z k) + \cos({\\theta} / 2)]`.
+
+    Args:
+        quat (...x4 tensor, XYZW convention): batch of unit quaternions.
+            No normalization is applied before computation.
+        shortest_arc (bool): if True, the function returns the smallest rotation vectors corresponding
+            to the input 3D rotations, i.e. rotation vectors with a norm smaller than :math:`\pi`.
+            If False, the function may return rotation vectors of norm larger than :math:`\pi`, depending on the sign of the input quaternions.
+    Returns:
+        batch of rotation vectors (...x3 tensor).
+    Note:
+        Behavior is undefined for inputs ``quat=torch.as_tensor([0.0, 0.0, 0.0, -1.0])`` and ``shortest_arc=False``,
+        as any rotation vector of angle :math:`2 \pi` could be a valid representation in such case.
+    """
+    batch_shape = quat.shape[:-1]
+    quat = quat.reshape((-1, 4))
+    # We perform a copy to support auto-differentiation.
+    quat = quat.clone()
+    # Adapted from SciPy:
+    # https://github.com/scipy/scipy/blob/adc4f4f7bab120ccfab9383aba272954a0a12fb0/scipy/spatial/transform/rotation.py#L1006-L1073
+    if shortest_arc:
+        # Enforce w > 0 to ensure 0 <= angle <= pi.
+        # (Otherwise angle can be arbitrary within ]-2pi, 2pi]).
+        quat[quat[:, 3] < 0] *= -1
+    half_angle = torch.atan2(torch.norm(quat[:, :3], dim=1), quat[:, 3])
+    angle = 2 * half_angle
+    small_angle = torch.abs(angle) <= 1e-3
+    large_angle = ~small_angle
+
+    num_rotations = len(quat)
+    scale = torch.empty(num_rotations, dtype=quat.dtype, device=quat.device)
+    scale[small_angle] = 2 + angle[small_angle] ** 2 / 12 + 7 * angle[small_angle] ** 4 / 2880
+    scale[large_angle] = angle[large_angle] / torch.sin(half_angle[large_angle])
+
+    rotvec = scale[:, None] * quat[:, :3]
+    return rotvec.reshape(batch_shape + (3,))
+
+
+def rotvec_to_unitquat(rotvec):
+    """
+    Converts rotation vector into unit quaternion representation.
+
+    Args:
+        rotvec (...x3 tensor): batch of rotation vectors.
+    Returns:
+        batch of unit quaternions (...x4 tensor, XYZW convention).
+    """
+    batch_shape = rotvec.shape[:-1]
+    rotvec = rotvec.reshape((-1, 3))
+    num_rotations, D = rotvec.shape
+    assert D == 3, "Input should be a Bx3 tensor."
+
+    # Adapted from SciPy:
+    # https://github.com/scipy/scipy/blob/adc4f4f7bab120ccfab9383aba272954a0a12fb0/scipy/spatial/transform/rotation.py#L621
+
+    norms = torch.norm(rotvec, dim=-1)
+    small_angle = norms <= 1e-3
+    large_angle = ~small_angle
+
+    scale = torch.empty((num_rotations,), device=rotvec.device, dtype=rotvec.dtype)
+    scale[small_angle] = 0.5 - norms[small_angle] ** 2 / 48 + norms[small_angle] ** 4 / 3840
+    scale[large_angle] = torch.sin(norms[large_angle] / 2) / norms[large_angle]
+
+    quat = torch.empty((num_rotations, 4), device=rotvec.device, dtype=rotvec.dtype)
+    quat[:, :3] = scale[:, None] * rotvec
+    quat[:, 3] = torch.cos(norms / 2)
+    return quat.reshape(batch_shape + (4,))
+
+
+def unitquat_slerp(q0, q1, steps, shortest_arc=True):
+    """
+    Spherical linear interpolation between two unit quaternions.
+
+    Args:
+        q0, q1 (Ax4 tensor): batch of unit quaternions (A may contain multiple dimensions).
+        steps (tensor of shape A): interpolation steps, 0.0 corresponding to q0 and 1.0 to q1 (A may contain multiple dimensions).
+        shortest_arc (boolean): if True, interpolation will be performed along the shortest arc on SO(3) from `q0` to `q1` or `-q1`.
+    Returns:
+        batch of interpolated quaternions (Ax4 tensor).
+    Note:
+        When considering quaternions as rotation representations,
+        one should keep in mind that spherical interpolation is not necessarily performed along the shortest arc,
+        depending on the sign of ``torch.sum(q0*q1,dim=-1)``.
+
+        Behavior is undefined when using ``shortest_arc=False`` with antipodal quaternions.
+    """
+    # Relative rotation
+    q0_conj = q0.clone()
+    q0_conj[..., :3] *= -1
+    rel_q = quat_product(q0_conj, q1)
+    rel_rotvec = unitquat_to_rotvec(rel_q, shortest_arc=shortest_arc)
+    # Relative rotations to apply
+    rel_rotvecs = steps.reshape(steps.shape + (1,)) * rel_rotvec
+    rots = rotvec_to_unitquat(rel_rotvecs.reshape(-1, 3)).reshape(*rel_rotvecs.shape[:-1], 4)
+    interpolated_q = quat_product(q0, rots.to(q0))
+    return interpolated_q
+
+
 def quaternion_matrix(quaternion: NDArray) -> np.ndarray:
     """Return homogeneous rotation matrix from quaternion.
 
@@ -160,7 +418,52 @@ def quaternion_matrix(quaternion: NDArray) -> np.ndarray:
     )
 
 
-def get_interpolated_poses(pose_a: NDArray, pose_b: NDArray, steps: int = 10) -> List[float]:
+# from pytorch3d
+def rotation_6d_to_matrix(d6: torch.Tensor) -> torch.Tensor:
+    """
+    Converts 6D rotation representation by Zhou et al. [1] to rotation matrix
+    using Gram--Schmidt orthogonalization per Section B of [1].
+    Args:
+        d6: 6D rotation representation, of size (*, 6)
+
+    Returns:
+        batch of rotation matrices of size (*, 3, 3)
+
+    [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
+    On the Continuity of Rotation Representations in Neural Networks.
+    IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+    Retrieved from http://arxiv.org/abs/1812.07035
+    """
+
+    a1, a2 = d6[..., :3], d6[..., 3:]
+    b1 = F.normalize(a1, dim=-1)
+    b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
+    b2 = F.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    return torch.stack((b1, b2, b3), dim=-2)
+
+
+# from pytorch3d
+def matrix_to_rotation_6d(matrix: torch.Tensor) -> torch.Tensor:
+    """
+    Converts rotation matrices to 6D rotation representation by Zhou et al. [1]
+    by dropping the last row. Note that 6D representation is not unique.
+    Args:
+        matrix: batch of rotation matrices of size (*, 3, 3)
+
+    Returns:
+        6D rotation representation, of size (*, 6)
+
+    [1] Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H.
+    On the Continuity of Rotation Representations in Neural Networks.
+    IEEE Conference on Computer Vision and Pattern Recognition, 2019.
+    Retrieved from http://arxiv.org/abs/1812.07035
+    """
+    batch_dim = matrix.size()[:-2]
+    return matrix[..., :2, :].clone().reshape(batch_dim + (6,))
+
+
+def get_interpolated_poses(pose_a: NDArray, pose_b: NDArray, steps: int = 10, include_last=True) -> List[float]:
     """Return interpolation of poses with specified number of steps.
     Args:
         pose_a: first pose
@@ -171,7 +474,8 @@ def get_interpolated_poses(pose_a: NDArray, pose_b: NDArray, steps: int = 10) ->
     quat_a = quaternion_from_matrix(pose_a[:3, :3])
     quat_b = quaternion_from_matrix(pose_b[:3, :3])
 
-    ts = np.linspace(0, 1, steps)
+    max_t = 1 if include_last else 1 - 1 / steps
+    ts = np.linspace(0, max_t, steps)
     quats = [quaternion_slerp(quat_a, quat_b, t) for t in ts]
     trans = [(1 - t) * pose_a[:3, 3] + t * pose_b[:3, 3] for t in ts]
 
@@ -185,7 +489,7 @@ def get_interpolated_poses(pose_a: NDArray, pose_b: NDArray, steps: int = 10) ->
 
 
 def get_interpolated_k(
-    k_a: Float[Tensor, "3 3"], k_b: Float[Tensor, "3 3"], steps: int = 10
+    k_a: Float[Tensor, "3 3"], k_b: Float[Tensor, "3 3"], steps: int = 10, include_last=True
 ) -> List[Float[Tensor, "3 4"]]:
     """
     Returns interpolated path between two camera poses with specified number of steps.
@@ -199,7 +503,8 @@ def get_interpolated_k(
         List of interpolated camera poses
     """
     Ks: List[Float[Tensor, "3 3"]] = []
-    ts = np.linspace(0, 1, steps)
+    max_t = 1 if include_last else 1 - 1 / steps
+    ts = np.linspace(0, max_t, steps)
     for t in ts:
         new_k = k_a * (1.0 - t) + k_b * t
         Ks.append(new_k)
@@ -247,6 +552,7 @@ def get_interpolated_poses_many(
     Ks: Float[Tensor, "num_poses 3 3"],
     steps_per_transition: int = 10,
     order_poses: bool = False,
+    include_last: bool = True,
 ) -> Tuple[Float[Tensor, "num_poses 3 4"], Float[Tensor, "num_poses 3 3"]]:
     """Return interpolated poses for many camera poses.
 
@@ -268,9 +574,13 @@ def get_interpolated_poses_many(
     for idx in range(poses.shape[0] - 1):
         pose_a = poses[idx].cpu().numpy()
         pose_b = poses[idx + 1].cpu().numpy()
-        poses_ab = get_interpolated_poses(pose_a, pose_b, steps=steps_per_transition)
+        poses_ab = get_interpolated_poses(pose_a, pose_b, steps=steps_per_transition, include_last=include_last)
         traj += poses_ab
-        k_interp += get_interpolated_k(Ks[idx], Ks[idx + 1], steps=steps_per_transition)
+        k_interp += get_interpolated_k(Ks[idx], Ks[idx + 1], steps=steps_per_transition, include_last=include_last)
+
+    if not include_last:
+        traj.append(poses[-1].cpu().numpy())
+        k_interp.append(Ks[-1])
 
     traj = np.stack(traj, axis=0)
     k_interp = torch.stack(k_interp, dim=0)
@@ -294,7 +604,9 @@ def normalize_with_norm(x: torch.Tensor, dim: int) -> Tuple[torch.Tensor, torch.
         Tuple of normalized tensor and corresponding norm.
     """
 
-    norm = torch.maximum(torch.linalg.vector_norm(x, dim=dim, keepdims=True), torch.tensor([_EPS]).to(x))
+    norm = torch.maximum(
+        torch.linalg.vector_norm(x, dim=dim, keepdims=True), torch.tensor([_EPS], device=x.device, dtype=x.dtype)
+    )
     return x / norm, norm
 
 

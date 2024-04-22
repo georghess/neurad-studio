@@ -27,127 +27,96 @@
       "justMyCode": true
     },
     {
-      "name": "Python: train",
+      "name": "Python: NeuRAD",
       "type": "python",
       "request": "launch",
       "program": "nerfstudio/scripts/train.py",
       "console": "integratedTerminal",
+      "justMyCode": true,
       "args": [
-        "instant_ngp",
-        "--viewer.no-enable",
-        "--logging.event-writer=wandb"
+        "neurad",
+        "--pipeline.model.eval_num_rays_per_chunk=2048",
+        "--pipeline.datamanager.num_processes=0",
+        "--pipeline.datamanager.train-num-lidar-rays-per-batch=1280",
+        "--pipeline.datamanager.eval-num-lidar-rays-per-batch=128",
+        "--pipeline.datamanager.train_num_rays_per_batch=4096",
+        "--pipeline.datamanager.eval_num_rays_per_batch=4096",
+        "pandaset-data",
+        "--data=./data/pandaset",
+        "--dataset_end_fraction=0.2",
+        "--cameras=front"
       ]
     },
     {
-      "name": "Python: train ngp",
+      "name": "Python: NeuRAD tiny",
       "type": "python",
       "request": "launch",
       "program": "nerfstudio/scripts/train.py",
       "console": "integratedTerminal",
-      "args": ["instant_ngp"]
-    },
-    {
-      "name": "Python: train ngp nerfstudio",
-      "type": "python",
-      "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
-      "console": "integratedTerminal",
+      "justMyCode": true,
       "args": [
-        "instant_ngp",
-        // "--experiment_name=nerfstudio_experiment",
-        "--logging.local-writer.max-log-size=0",
-        "--viewer.no-enable"
-        // viewer
-        // "--viewer.enable",
-        // "--viewer.zmq-url=tcp://127.0.0.1:6001",
-        // "--viewer.websocket-port=8014",
-        // "--pipeline.model.randomize-background",
-        // "--pipeline.model.cone-angle=0.00390625",
-        // "nerfstudio-data"
+        "neurad",
+        "--pipeline.model.eval_num_rays_per_chunk=2048",
+        "--pipeline.model.field.grid.static.hashgrid_dim=2",
+        "--pipeline.model.field.grid.static.num_levels=4",
+        "--pipeline.model.field.grid.static.log2_hashmap_size=15",
+        "--pipeline.model.field.grid.actor.hashgrid_dim=2",
+        "--pipeline.model.field.grid.actor.num_levels=2",
+        "--pipeline.model.field.grid.actor.log2_hashmap_size=11",
+        "--pipeline.datamanager.num_processes=0",
+        "--pipeline.datamanager.train-num-lidar-rays-per-batch=1280",
+        "--pipeline.datamanager.eval-num-lidar-rays-per-batch=128",
+        "--pipeline.datamanager.train-num-rays-per_batch=2048",
+        "--pipeline.datamanager.eval-num-rays_per_batch=2048",
+        "pandaset-data",
+        "--data=./data/pandaset",
+        "--dataset_end_fraction=0.2",
+        "--cameras=front",
       ]
     },
     {
-      "name": "Python: train ngp-friends",
-      "type": "python",
-      "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
-      "console": "integratedTerminal",
-      "args": [
-        "instant_ngp",
-        "--viewer.enable",
-        "--viewer.zmq-url=tcp://127.0.0.1:6001",
-        "--viewer.websocket-port=8014",
-        "--steps_per_save=1000000",
-        "--steps_per_test=1000000",
-        "--pipeline.model.density-field-params.base-scale=4",
-        "--pipeline.model.density-field-params.num-cascades=1",
-        "pipeline.datamanager.train-dataparser:friends-data-parser-config",
-        "--pipeline.datamanager.train-dataparser.scene-scale=4"
-      ]
-    },
-    {
-      "name": "Python: train semantic_nerfw",
-      "type": "python",
-      "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
-      "console": "integratedTerminal",
-      "args": ["semantic_nerf"]
-    },
-    {
-      "name": "Python: NeuS on Replica",
+      "name": "Python: NeuRAD CPU",
       "type": "python",
       "request": "launch",
       "program": "nerfstudio/scripts/train.py",
       "console": "integratedTerminal",
       "justMyCode": false,
-      "env": { "CUDA_VISIBLE_DEVICES": "0" },
+      "env": {"PYTORCH_ENABLE_MPS_FALLBACK": "1"},
       "args": [
-        "neus",
-        "--pipeline.model.sdf-field.inside-outside=True",
-        "--pipeline.model.mono-depth-loss-mult=0.1",
-        "--pipeline.model.mono-normal-loss-mult=0.05",
-        "--vis=wandb",
-        "sdfstudio-data",
-        "--data=data/sdfstudio-demo-data/replica-room0",
-        "--include_mono_prior=True"
+        "neurad",
+        "--pipeline.model.eval_num_rays_per_chunk=2048",
+        "--pipeline.model.implementation=torch",
+        "--pipeline.model.sampling.proposal_field_1.grid.actor.use_4d_hashgrid=False",
+        "--pipeline.model.sampling.proposal_field_2.grid.actor.use_4d_hashgrid=False",
+        "--pipeline.model.field.grid.actor.use_4d_hashgrid=False",
+        "--machine.device-type=mps",
+        "--mixed_precision=False",
+        "--pipeline.datamanager.num_processes=0",
+        "--pipeline.datamanager.train-num-lidar-rays-per-batch=128",
+        "--pipeline.datamanager.eval-num-lidar-rays-per-batch=128",
+        "--pipeline.datamanager.train_num_rays_per_batch=2048",
+        "--pipeline.datamanager.eval_num_rays_per_batch=2048",
+        "--vis=tensorboard",
+        "pandaset-data",
+        "--data=./data/pandaset",
+        "--dataset_end_fraction=0.2",
+        "--cameras=front"
       ]
     },
     {
-      "name": "Python: NeuS-facto on Replica",
+      "name": "Python: Splatfacto PandaSet",
       "type": "python",
       "request": "launch",
       "program": "nerfstudio/scripts/train.py",
       "console": "integratedTerminal",
-      "justMyCode": false,
-      "env": { "CUDA_VISIBLE_DEVICES": "0" },
+      "justMyCode": true,
       "args": [
-        "neus-facto",
-        "--pipeline.model.sdf-field.inside-outside=True",
-        "--pipeline.model.mono-depth-loss-mult=0.1",
-        "--pipeline.model.mono-normal-loss-mult=0.05",
-        "--vis=wandb",
-        "sdfstudio-data",
-        "--data=data/sdfstudio-demo-data/replica-room0",
-        "--include_mono_prior=True"
+        "splatfacto",
+        "pandaset-data",
+        "--sequence=028",
+        "--data=./data/pandaset",
+        "--dataset_end_fraction=1.0",
       ]
     },
-    {
-      "name": "Python: NeuS-facto on DTU (no mono-prior)",
-      "type": "python",
-      "request": "launch",
-      "program": "nerfstudio/scripts/train.py",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "env": { "CUDA_VISIBLE_DEVICES": "0" },
-      "args": [
-        "neus-facto",
-        "--pipeline.model.sdf-field.inside-outside=False",
-        "--vis=wandb",
-        "sdfstudio-data",
-        "--data=data/sdfstudio-demo-data/dtu-scan65",
-        "--include_mono_prior=False",
-        "--auto-orient=True"
-      ]
-    }
   ]
 }

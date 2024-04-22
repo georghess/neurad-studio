@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +21,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass, field
-from typing import Literal, Optional, Type, Union
+from typing import Literal, Optional, Tuple, Type, Union
 
 import torch
 import tyro
@@ -110,6 +111,10 @@ class CameraOptimizer(nn.Module):
         else:
             assert_never(self.config.mode)
 
+    def _get_pose_adjustment(self) -> Float[Tensor, "num_cameras 6"]:
+        """Get the pose adjustment."""
+        return self.pose_adjustment
+
     def forward(
         self,
         indices: Int[Tensor, "camera_indices"],
@@ -127,9 +132,9 @@ class CameraOptimizer(nn.Module):
         if self.config.mode == "off":
             pass
         elif self.config.mode == "SO3xR3":
-            outputs.append(exp_map_SO3xR3(self.pose_adjustment[indices, :]))
+            outputs.append(exp_map_SO3xR3(self._get_pose_adjustment()[indices, :]))
         elif self.config.mode == "SE3":
-            outputs.append(exp_map_SE3(self.pose_adjustment[indices, :]))
+            outputs.append(exp_map_SE3(self._get_pose_adjustment()[indices, :]))
         else:
             assert_never(self.config.mode)
         # Detach non-trainable indices by setting to identity transform
@@ -149,7 +154,11 @@ class CameraOptimizer(nn.Module):
         if self.config.mode != "off":
             correction_matrices = self(raybundle.camera_indices.squeeze())  # type: ignore
             raybundle.origins = raybundle.origins + correction_matrices[:, :3, 3]
-            raybundle.directions = torch.bmm(correction_matrices[:, :3, :3], raybundle.directions[..., None]).squeeze()
+            raybundle.directions = (
+                torch.bmm(correction_matrices[:, :3, :3], raybundle.directions[..., None])
+                .squeeze()
+                .to(raybundle.origins)
+            )
 
     def apply_to_camera(self, camera: Cameras) -> None:
         """Apply the pose correction to the raybundle"""
@@ -164,9 +173,10 @@ class CameraOptimizer(nn.Module):
     def get_loss_dict(self, loss_dict: dict) -> None:
         """Add regularization"""
         if self.config.mode != "off":
+            pose_adjustment = self._get_pose_adjustment()
             loss_dict["camera_opt_regularizer"] = (
-                self.pose_adjustment[:, :3].norm(dim=-1).mean() * self.config.trans_l2_penalty
-                + self.pose_adjustment[:, 3:].norm(dim=-1).mean() * self.config.rot_l2_penalty
+                pose_adjustment[:, :3].norm(dim=-1).mean() * self.config.trans_l2_penalty
+                + pose_adjustment[:, 3:].norm(dim=-1).mean() * self.config.rot_l2_penalty
             )
 
     def get_correction_matrices(self):
@@ -176,8 +186,9 @@ class CameraOptimizer(nn.Module):
     def get_metrics_dict(self, metrics_dict: dict) -> None:
         """Get camera optimizer metrics"""
         if self.config.mode != "off":
-            metrics_dict["camera_opt_translation"] = self.pose_adjustment[:, :3].norm()
-            metrics_dict["camera_opt_rotation"] = self.pose_adjustment[:, 3:].norm()
+            pose_adjustment = self._get_pose_adjustment()
+            metrics_dict["camera_opt_translation"] = pose_adjustment[:, :3].norm()
+            metrics_dict["camera_opt_rotation"] = pose_adjustment[:, 3:].norm()
 
     def get_param_groups(self, param_groups: dict) -> None:
         """Get camera optimizer parameters"""
@@ -187,3 +198,37 @@ class CameraOptimizer(nn.Module):
             param_groups["camera_opt"] = camera_opt_params
         else:
             assert len(camera_opt_params) == 0
+
+
+@dataclass
+class ScaledCameraOptimizerConfig(CameraOptimizerConfig):
+    """Configuration of axis-masked optimization for camera poses."""
+
+    _target: Type = field(default_factory=lambda: ScaledCameraOptimizer)
+
+    weights: Tuple[float, float, float, float, float, float] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+
+    trans_l2_penalty: Tuple[float, float, float] = (1e-2, 1e-2, 1e-2)  # TODO: this is l1
+
+
+class ScaledCameraOptimizer(CameraOptimizer):
+    """Camera optimizer that masks which components can be optimized."""
+
+    def __init__(self, config: ScaledCameraOptimizerConfig, **kwargs) -> None:
+        super().__init__(config, **kwargs)
+        self.config: ScaledCameraOptimizerConfig = self.config
+        self.register_buffer("weights", torch.tensor(self.config.weights, dtype=torch.float32))
+        self.trans_penalty = torch.tensor(self.config.trans_l2_penalty, dtype=torch.float32, device=self.device)
+
+    def _get_pose_adjustment(self) -> Float[Tensor, "num_cameras 6"]:
+        """Get the pose adjustment."""
+        return self.pose_adjustment * self.weights
+
+    def get_loss_dict(self, loss_dict: dict) -> None:
+        """Add regularization"""
+        if self.config.mode != "off":
+            pose_adjustment = self._get_pose_adjustment()
+            self.trans_penalty = self.trans_penalty.to(pose_adjustment.device)
+            loss_dict["camera_opt_regularizer"] = (
+                pose_adjustment[:, :3].abs() * self.trans_penalty
+            ).mean() + pose_adjustment[:, 3:].norm(dim=-1).mean() * self.config.rot_l2_penalty

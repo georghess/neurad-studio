@@ -30,7 +30,7 @@ def test_frustum_get_position():
     assert positions == pytest.approx(target_position, abs=1e-6)
 
 
-def test_frustum_get_gaussian_blob():
+def test_frustum_get_conical_gaussian_blob():
     """Test gaussian blob calculation"""
 
     frustum = Frustums(
@@ -41,7 +41,7 @@ def test_frustum_get_gaussian_blob():
         pixel_area=torch.ones((5, 1)),
     )
 
-    gaussian_blob = frustum.get_gaussian_blob()
+    gaussian_blob = frustum.get_conical_gaussian_blob()
     assert gaussian_blob.mean.shape == (5, 3)
     assert gaussian_blob.cov.shape == (5, 3, 3)
 
@@ -72,4 +72,4 @@ def test_get_mock_frustum():
 
 
 if __name__ == "__main__":
-    test_frustum_get_gaussian_blob()
+    test_frustum_get_conical_gaussian_blob()

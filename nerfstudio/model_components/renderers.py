@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,6 +54,40 @@ def background_color_override_context(mode: Float[Tensor, "3"]) -> Generator[Non
         yield
     finally:
         BACKGROUND_COLOR_OVERRIDE = old_background_color
+
+
+class FeatureRenderer(nn.Module):
+    """Standard volumetric rendering for arbitrary features."""
+
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(
+        self,
+        features: Float[Tensor, "*bs num_samples num_features"],
+        weights: Float[Tensor, "*bs num_samples 1"],
+        ray_indices: Optional[Int[Tensor, "num_samples"]] = None,
+        num_rays: Optional[int] = None,
+    ) -> Float[Tensor, "*bs num_features"]:
+        """Composite samples along ray and render color image
+
+        Args:
+            features: Features for each sample
+            weights: Weights for each sample
+            ray_indices: Ray index for each sample, used when samples are packed.
+            num_rays: Number of rays, used when samples are packed.
+
+        Returns:
+            Outputs
+        """
+        if ray_indices is None or num_rays is None:
+            # Unpacked
+            return torch.sum(features * weights, dim=-2)
+        else:
+            # Packed
+            return nerfacc.accumulate_along_rays(
+                weights[..., 0], values=features, ray_indices=ray_indices, n_rays=num_rays
+            )
 
 
 class RGBRenderer(nn.Module):
@@ -433,6 +468,8 @@ class NormalsRenderer(nn.Module):
         normals: Float[Tensor, "*bs num_samples 3"],
         weights: Float[Tensor, "*bs num_samples 1"],
         normalize: bool = True,
+        ray_indices: Optional[Int[Tensor, "num_samples"]] = None,
+        num_rays: Optional[int] = None,
     ) -> Float[Tensor, "*bs 3"]:
         """Calculate normals along the ray.
 
@@ -440,8 +477,13 @@ class NormalsRenderer(nn.Module):
             normals: Normals for each sample.
             weights: Weights of each sample.
             normalize: Normalize normals.
+            ray_indices: Ray index for each sample, used when samples are packed.
+            num_rays: Number of rays, used when samples are packed.
         """
         n = torch.sum(weights * normals, dim=-2)
+        if ray_indices is not None and num_rays is not None:
+            # Necessary for packed samples from volumetric ray sampler
+            n = nerfacc.accumulate_along_rays(weights[..., 0], values=normals, ray_indices=ray_indices, n_rays=num_rays)
         if normalize:
             n = safe_normalize(n)
         return n

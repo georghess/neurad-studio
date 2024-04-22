@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,11 +59,21 @@ class RunViewer:
 
     def main(self) -> None:
         """Main function."""
+
+        def disable_mp_in_config(config):
+            if getattr(config.pipeline.datamanager, "num_processes", None):
+                config.pipeline.datamanager.num_processes = 0
+            if getattr(config.pipeline.datamanager.dataparser, "add_missing_points", None):
+                config.pipeline.datamanager.dataparser.add_missing_points = False
+            return config
+
         config, pipeline, _, step = eval_setup(
             self.load_config,
             eval_num_rays_per_chunk=None,
             test_mode="test",
+            update_config_callback=disable_mp_in_config,
         )
+
         num_rays_per_chunk = config.viewer.num_rays_per_chunk
         assert self.viewer.num_rays_per_chunk == -1
         config.vis = self.vis
@@ -111,7 +122,7 @@ def _start_viewer(config: TrainerConfig, pipeline: Pipeline, step: int):
     config.logging.local_writer.enable = False
     writer.setup_local_writer(config.logging, max_iter=config.max_num_iterations, banner_messages=banner_messages)
 
-    assert viewer_state and pipeline.datamanager.train_dataset
+    assert viewer_state and pipeline.datamanager.train_dataset is not None
     viewer_state.init_scene(
         train_dataset=pipeline.datamanager.train_dataset,
         train_state="completed",

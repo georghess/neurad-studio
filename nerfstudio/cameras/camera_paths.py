@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +19,7 @@ Code for camera paths.
 
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
 import torch
 
 import nerfstudio.utils.poses as pose_utils
@@ -39,17 +41,67 @@ def get_interpolated_camera_path(cameras: Cameras, steps: int, order_poses: bool
     """
     Ks = cameras.get_intrinsics_matrices()
     poses = cameras.camera_to_worlds
-    poses, Ks = get_interpolated_poses_many(poses, Ks, steps_per_transition=steps, order_poses=order_poses)
+    poses, Ks = get_interpolated_poses_many(
+        poses, Ks, steps_per_transition=steps, order_poses=order_poses, include_last=False
+    )
 
-    cameras = Cameras(
+    return Cameras(
         fx=Ks[:, 0, 0],
         fy=Ks[:, 1, 1],
         cx=Ks[0, 0, 2],
         cy=Ks[0, 1, 2],
         camera_type=cameras.camera_type[0],
         camera_to_worlds=poses,
+        height=cameras.height[0],
+        width=cameras.width[0],
     )
-    return cameras
+
+
+def get_interpolated_spiral_camera_path(cameras: Cameras, steps: int, radius: float, rotations: float) -> Cameras:
+    """Generate a camera path between two cameras with a circular spiral pattern.
+
+    Args:
+        cameras: Cameras object containing intrinsics of all cameras.
+        steps: The number of steps to interpolate between the two cameras.
+        radius: The radius of the circular spiral around the straight path.
+        rotations: The number of rotations along the spiral path.
+
+    Returns:
+        A new set of cameras along a circular spiral path.
+    """
+    Ks = cameras.get_intrinsics_matrices()
+    poses = cameras.camera_to_worlds
+    poses, Ks = get_interpolated_poses_many(poses, Ks, steps_per_transition=steps, include_last=False)
+
+    # Calculate the angles for the circular spiral
+    angles = np.linspace(0, 2 * np.pi * rotations, len(poses))
+
+    direction = poses[0, :3, 3] - poses[-1, :3, 3]
+    direction = direction / np.linalg.norm(direction)
+
+    # Calculate the normal vector (orthogonal to the direction vector and the z-axis)
+    normal = np.cross(np.array([0, 0, 1]), direction)
+    normal = normal / np.linalg.norm(normal)
+
+    # Calculate a second orthogonal vector in the plane perpendicular to the direction vector
+    ortho = np.cross(direction, normal)
+    ortho = ortho / np.linalg.norm(ortho)
+
+    # Calculate the offsets in the plane perpendicular to the direction vector
+    offsets = radius * (np.cos(angles)[:, None] * normal[None] + np.sin(angles)[:, None] * ortho[None])
+
+    # Add the offsets to the current position
+    poses[:, :3, 3] += offsets
+
+    return Cameras(
+        fx=Ks[:, 0, 0],
+        fy=Ks[:, 1, 1],
+        cx=Ks[0, 0, 2],
+        cy=Ks[0, 1, 2],
+        camera_to_worlds=poses,
+        height=cameras.height[0],
+        width=cameras.width[0],
+    )
 
 
 def get_spiral_path(
@@ -117,6 +169,8 @@ def get_spiral_path(
         cy=camera.cy[0],
         camera_to_worlds=new_c2ws,
         times=times,
+        height=camera.height[0],
+        width=camera.width[0],
     )
 
 

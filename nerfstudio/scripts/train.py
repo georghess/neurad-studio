@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,10 +52,16 @@ import traceback
 from datetime import timedelta
 from typing import Any, Callable, Literal, Optional
 
+import torch.multiprocessing as mp
+
+try:
+    mp.set_start_method("spawn")
+except RuntimeError:
+    pass
+
 import numpy as np
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp
 import tyro
 import yaml
 

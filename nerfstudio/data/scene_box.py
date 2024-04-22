@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,15 +60,22 @@ class SceneBox:
         return SceneBox(aabb=(self.aabb - self.get_center()) * scale_factor)
 
     @staticmethod
-    def get_normalized_positions(positions: Float[Tensor, "*batch 3"], aabb: Float[Tensor, "2 3"]):
+    def get_normalized_positions(
+        positions: Float[Tensor, "*batch 3"], aabb: Float[Tensor, "* 2 3"], per_dim_norm: bool = True
+    ):
         """Return normalized positions in range [0, 1] based on the aabb axis-aligned bounding box.
 
         Args:
             positions: the xyz positions
             aabb: the axis-aligned bounding box
         """
-        aabb_lengths = aabb[1] - aabb[0]
-        normalized_positions = (positions - aabb[0]) / aabb_lengths
+        batch_shape = positions.shape[:-1]
+        if len(aabb.shape) > 2 and batch_shape != aabb.shape[:-2]:
+            # add singleton dimension
+            aabb = aabb.unsqueeze(1)
+        aabb_lengths = aabb[..., 1, :] - aabb[..., 0, :]
+        aabb_lengths = aabb_lengths if per_dim_norm else aabb_lengths.max(dim=-1, keepdim=True)[0]
+        normalized_positions = (positions - aabb[..., 0, :]) / aabb_lengths
         return normalized_positions
 
     @staticmethod

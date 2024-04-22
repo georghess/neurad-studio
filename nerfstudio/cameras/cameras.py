@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -918,6 +919,15 @@ class Cameras(TensorDataclass):
         else:
             metadata = {"directions_norm": directions_norm[0].detach()}
 
+        if self.metadata and "rolling_shutter_offsets" in self.metadata and "velocities" in self.metadata:
+            cam_idx = camera_indices.squeeze(-1)
+            heights, rows = self.height[cam_idx], coords[..., 0:1]
+            duration = self.metadata["rolling_shutter_offsets"][cam_idx].diff()
+            time_offsets = rows / heights * duration + self.metadata["rolling_shutter_offsets"][cam_idx][..., 0:1]
+            origins = origins + self.metadata["velocities"][cam_idx] * time_offsets
+            times = times + time_offsets
+            del metadata["rolling_shutter_offsets"]  # it has served its purpose
+
         return RayBundle(
             origins=origins,
             directions=directions,
@@ -925,6 +935,7 @@ class Cameras(TensorDataclass):
             camera_indices=camera_indices,
             times=times,
             metadata=metadata,
+            fars=torch.ones_like(pixel_area) * 1_000_000,
         )
 
     def to_json(
