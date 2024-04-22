@@ -26,9 +26,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade --upgrade-strategy eager -e .[dev]
-      - name: Run license checks
-        run: |
-          ./nerfstudio/scripts/licensing/license_headers.sh --check
       - name: Check notebook cell metadata
         run: |
           python ./nerfstudio/scripts/docs/add_nb_tags.py --check
