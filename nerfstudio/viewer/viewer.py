@@ -145,8 +145,8 @@ class Viewer:
             ),
         )
         image = viser.theme.TitlebarImage(
-            image_url_light="https://raw.githubusercontent.com/georghess/neurad-studio/main/docs/_static/imgs/neurad_logo.png",
-            image_url_dark="https://raw.githubusercontent.com/georghess/neurad-studio/main/docs/_static/imgs/neurad_logo.png",
+            image_url_light="https://raw.githubusercontent.com/georghess/neurad-studio/main/docs/_static/imgs/neurad_logo_horizontal_light.png",
+            image_url_dark="https://raw.githubusercontent.com/georghess/neurad-studio/main/docs/_static/imgs/neurad_logo_horizontal_dark.png",
             image_alt="Neurad Logo",
             href="https://github.com/georghess/neurad-studio",
         )
