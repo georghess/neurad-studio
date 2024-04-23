@@ -1,5 +1,3 @@
-<div align="center"><h2>NeuRAD: Neural Rendering for Autonomous Driving</h2></div>
-
 <p align="center">
     <!-- project badges -->
     <a href="https://research.zenseact.com/publications/neurad/"><img src="https://img.shields.io/badge/Project-Page-ffa"/></a>
@@ -9,16 +7,18 @@
     </a>
 </p>
 
-<p align="center"><b>CVPR 2024 highlight</b></p>
+
 <div align="center">
 <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/neurad_logo_with_text_dark.png" />
-<!-- /pypi-strip -->
     <img alt="tyro logo" src="docs/_static/imgs/neurad_logo_with_text.png" width="80%"/>
-<!-- pypi-strip -->
 </picture>
 </div>
 
+<div align="center">
+<h3 style="font-size:2.0em;">Neural Rendering for Autonomous Driving</h3>
+<h4>CVPR 2024 highlight</h4>
+</div>
 <div align="center">
 
 [Quickstart](#quickstart) ·
@@ -33,7 +33,40 @@ This is the official code release of the CVPR 2024 paper _NeuRAD: Neural Renderi
 
 In line with Nerfstudio's mission, this is a contributor-friendly repo with the goal of building a community where users can more easily build upon each other's contributions.
 
-Do you have feature requests or want to add **your** new AD-NeRF model? Or maybe provide structures for a new dataset? **We welcome [contributions](https://docs.nerf.studio/reference/contributing.html)!**
+Do you have feature requests or want to add **your** new AD-NeRF model? Or maybe provide structures for a new dataset? **We welcome contributions!**
+
+<div align="center">
+<a href="https://zenseact.com/">
+<picture style="padding-left: 10px; padding-right: 10px;">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/ZEN_Vertical_logo_white.svg" />
+    <img alt="zenseact logo" src="docs/_static/imgs/ZEN_Vertical_logo_black.svg" height="100px" />
+</picture>
+</a>
+<a href="https://www.chalmers.se/en/">
+<picture style="padding-left: 10px; padding-right: 10px; padding-bottom: 10px;">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/EN_Avancez_CH_white.png" />
+    <img alt="chalmers logo" src="docs/_static/imgs/EN_Avancez_CH_black.png" height="90px" />
+</picture>
+</a>
+<a href="https://www.lunduniversity.lu.se/">
+<picture style="padding-left: 10px; padding-right: 10px;">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/LundUniversity_C2line_NEG.png" />
+    <img alt="lund logo" src="docs/_static/imgs/LundUniversity_C2line_BLACK.png" height="100px" />
+</picture>
+</a>
+<a href="https://liu.se/en">
+<picture style="padding-left: 10px; padding-right: 10px;">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/LiU_secondary_1_white-PNG.png" />
+    <img alt="liu logo" src="docs/_static/imgs/LiU_secondary_1_black-PNG.png" height="100px" />
+</picture>
+</a>
+<a href="https://wasp-sweden.org/">
+<picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/WASP-logotype-white.png" />
+    <img alt="wasp logo" src="docs/_static/imgs/WASP_logotyp_grey_180116.png" height="80px" />
+</picture>
+</a>
+</div>
 
 # Quickstart
 
@@ -211,14 +244,10 @@ Nerfstudio has made it easy to add new methods, see [here](https://docs.nerf.stu
 # Built On
 
 <a href="https://github.com/nerfstudio-project/nerfstudio">
-<!-- pypi-strip -->
 <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/nerfstudio-project/nerfstudio/main/docs/_static/imgs/logo-dark.png" />
-<!-- /pypi-strip -->
     <img alt="tyro logo" src="https://raw.githubusercontent.com/nerfstudio-project/nerfstudio/main/docs/_static/imgs/logo.png" width="150px" />
-<!-- pypi-strip -->
 </picture>
-<!-- /pypi-strip -->
 </a>
 
 - Collaboration friendly studio for NeRFs
@@ -240,6 +269,6 @@ If you use this code or find our paper useful, please consider citing:
 
 # Contributors
 
-<a href="https://github.com/georghess/neurad/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=georghess/neurad" />
+<a href="https://github.com/georghess/neurad-studio/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=georghess/neurad-studio" />
 </a>

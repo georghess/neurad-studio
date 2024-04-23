@@ -13,7 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" Manage the state of the viewer """
+"""Manage the state of the viewer"""
+
 from __future__ import annotations
 
 import threading
@@ -135,7 +136,7 @@ class Viewer:
             viser.theme.TitlebarButton(
                 text="Github",
                 icon="GitHub",
-                href="https://github.com/nerfstudio-project/nerfstudio",
+                href="https://github.com/georghess/neurad-studio",
             ),
             viser.theme.TitlebarButton(
                 text="Documentation",
@@ -144,10 +145,10 @@ class Viewer:
             ),
         )
         image = viser.theme.TitlebarImage(
-            image_url_light="https://docs.nerf.studio/_static/imgs/logo.png",
-            image_url_dark="https://docs.nerf.studio/_static/imgs/logo-dark.png",
-            image_alt="NerfStudio Logo",
-            href="https://docs.nerf.studio/",
+            image_url_light="https://raw.githubusercontent.com/georghess/neurad-studio/main/docs/_static/imgs/neurad_logo.png",
+            image_url_dark="https://raw.githubusercontent.com/georghess/neurad-studio/main/docs/_static/imgs/neurad_logo.png",
+            image_alt="Neurad Logo",
+            href="https://github.com/georghess/neurad-studio",
         )
         titlebar_theme = viser.theme.TitlebarConfig(buttons=buttons, image=image)
         self.viser_server.configure_theme(
