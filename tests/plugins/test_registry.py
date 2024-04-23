@@ -19,10 +19,12 @@ else:
 
 @dataclass
 class TestConfigClass(MethodSpecification):
-    config: TrainerConfig = TrainerConfig(
-        method_name="test-method",
-        pipeline=VanillaPipelineConfig(),
-        optimizers={},
+    config: TrainerConfig = field(
+        default_factory=lambda: TrainerConfig(
+            method_name="test-method",
+            pipeline=field(default_factory=VanillaPipelineConfig),
+            optimizers={},
+        )
     )
     description: str = "Test description"
 

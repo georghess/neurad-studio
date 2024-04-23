@@ -36,6 +36,10 @@ class MockedDataManager:
         "Mocked to"
         return self
 
+    def get_num_train_data(self):
+        """Mocked get_num_train_data"""
+        return 0
+
 
 def test_load_state_dict():
     """Test pipeline load_state_dict calls model's load_state_dict"""
