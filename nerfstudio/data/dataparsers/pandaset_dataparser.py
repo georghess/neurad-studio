@@ -13,6 +13,7 @@
 # limitations under the License.
 """Data parser for PandaSet dataset"""
 
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -46,7 +47,7 @@ LIDAR_NAME_TO_INDEX = {
 }
 
 PANDASET_SEQ_LEN = 80
-EXTRINSICS_FILE_PATH = "./nerfstudio/data/dataparsers/pandaset_extrinsics.yaml"
+EXTRINSICS_FILE_PATH = os.path.join(os.path.dirname(__file__), "pandaset_extrinsics.yaml")
 MAX_RELECTANCE_VALUE = 255.0
 
 ALLOWED_RIGID_CLASSES = (

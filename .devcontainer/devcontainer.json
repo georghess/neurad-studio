@@ -1,7 +1,7 @@
 {
-    "name": "NerfStudio Dev Container",
+    "name": "Neurad-Studio Dev Container",
     "dockerComposeFile": "docker-compose.yml",
-    "service": "nerfstudio",
+    "service": "neurad-studio",
     "workspaceFolder": "/workspace",
     "shutdownAction": "stopCompose",
     "extensions": [

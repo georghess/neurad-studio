@@ -107,8 +107,8 @@ We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v
 
 ### Installing NeuRAD
 ```bash
-git clone https://github.com/georghess/neurad.git
-cd neurad
+git clone https://github.com/georghess/neurad-studio.git
+cd neurad-studio
 pip install --upgrade pip setuptools
 pip install -e .
 ```

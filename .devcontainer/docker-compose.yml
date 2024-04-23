@@ -1,9 +1,9 @@
 version: "3.8"
 
 services:
-  nerfstudio:
+  neurad-studio:
     shm_size: '12gb'
-    image: nerfstudio:latest
+    image: neurad-studio:latest
     build:
       context: ..
       dockerfile: ./Dockerfile
