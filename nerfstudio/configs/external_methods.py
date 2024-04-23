@@ -43,20 +43,19 @@ class ExternalMethod:
 
 external_methods = []
 
-# TODO: add UniSim
-# external_methods.append(
-#     ExternalMethod(
-#         """[bold yellow]UniSim[/bold yellow]
+external_methods.append(
+    ExternalMethod(
+        """[bold yellow]UniSim[/bold yellow]
 
-# To enable UniSim, you must install it first by running:
-#   [grey]pip install git+https://github.com/.../UniSim[/grey]""",
-#         configurations=[
-#             ("unisim", "UniSim reproduction, as specified in the paper"),
-#             ("unisim-tweaked", "UniSim with tweaked hyperparameters"),
-#         ],
-#         pip_package="git+https://github.com/.../unisim",
-#     )
-# )
+To enable UniSim, you must install it first by running:
+  [grey]pip install git+https://github.com/carlinds/unisim[/grey]""",
+        configurations=[
+            ("unisim", "UniSim reproduction, as specified in the paper"),
+            ("unisim++", "UniSim with some improvements/tweaks"),
+        ],
+        pip_package="git+https://github.com/carlinds/unisim",
+    )
+)
 
 
 @dataclass
