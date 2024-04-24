@@ -54,7 +54,9 @@ from nerfstudio.model_components.ray_samplers import PowerSampler, ProposalNetwo
 from nerfstudio.model_components.renderers import AccumulationRenderer, DepthRenderer, FeatureRenderer, NormalsRenderer
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.utils import colormaps
+from nerfstudio.utils.external import TCNN_EXISTS
 from nerfstudio.utils.math import chamfer_distance
+from nerfstudio.utils.printing import print_tcnn_speed_warning
 from nerfstudio.viewer.server.viewer_elements import ViewerSlider
 
 EPS = 1e-7
@@ -172,6 +174,9 @@ class NeuRADModel(ADModel):
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()
+        if self.config.implementation == "tcnn" and not TCNN_EXISTS:
+            print_tcnn_speed_warning("NeuRAD")
+            self.config.implementation = "torch"
         self.field = self.config.field.setup(
             actors=self.dynamic_actors,
             static_scale=self.scene_box.aabb.max(),
