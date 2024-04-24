@@ -69,7 +69,7 @@ def test_depth_renderer():
 
     ray_samples = RaySamples(
         frustums=frustums,
-        camera_indices=torch.ones((num_samples, 1)),
+        camera_indices=torch.ones((num_samples, 1), dtype=torch.long),
         deltas=torch.ones((num_samples, 1)),
     )
 
