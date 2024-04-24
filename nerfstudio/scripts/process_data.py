@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -492,29 +493,6 @@ Commands = Union[
     Annotated[ProcessRecord3D, tyro.conf.subcommand(name="record3d")],
     Annotated[ProcessODM, tyro.conf.subcommand(name="odm")],
 ]
-
-# Add aria subcommand if projectaria_tools is installed.
-try:
-    import projectaria_tools
-except ImportError:
-    projectaria_tools = None
-
-if projectaria_tools is not None:
-    from nerfstudio.scripts.datasets.process_project_aria import ProcessProjectAria
-
-    # Note that Union[A, Union[B, C]] == Union[A, B, C].
-    Commands = Union[Commands, Annotated[ProcessProjectAria, tyro.conf.subcommand(name="aria")]]
-else:
-    Commands = Union[
-        Commands,
-        Annotated[
-            NotInstalled,
-            tyro.conf.subcommand(
-                name="aria",
-                description="**Not installed.** Processing Project Aria data requires `pip install projectaria_tools'[all]'`.",
-            ),
-        ],
-    ]
 
 
 def entrypoint():

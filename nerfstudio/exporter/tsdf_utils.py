@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,12 +20,12 @@ TSDF utils.
 
 from __future__ import annotations
 
+import platform
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
-import pymeshlab
 import torch
 import torch.nn.functional as F
 from jaxtyping import Bool, Float
@@ -34,6 +35,12 @@ from torch import Tensor
 from nerfstudio.exporter.exporter_utils import Mesh, render_trajectory
 from nerfstudio.pipelines.base_pipeline import Pipeline
 from nerfstudio.utils.rich_utils import CONSOLE
+
+try:
+    import pymeshlab
+except ImportError:
+    if platform.machine() not in ["aarch64", "arm64"]:
+        raise  # pymeshlab is not available on ARM, so import error is expected
 
 TORCH_DEVICE = Union[torch.device, str]
 
