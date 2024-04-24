@@ -101,6 +101,7 @@ RUN git clone --branch 3.8 https://github.com/colmap/colmap.git --single-branch 
 
 # Upgrade pip and install packages.
 RUN python3.10 -m pip install --no-cache-dir --upgrade pip setuptools pathtools promise pybind11
+SHELL ["/bin/bash", "-c"]
 # Install pytorch and submodules
 RUN CUDA_VER=${CUDA_VERSION%.*} && CUDA_VER=${CUDA_VER//./} && python3.10 -m pip install --no-cache-dir \
     torch==2.0.1+cu${CUDA_VER} \
@@ -138,7 +139,9 @@ RUN git clone --recursive https://github.com/cvg/pixel-perfect-sfm.git && \
     cd ..
 
 RUN python3.10 -m pip install --no-cache-dir omegaconf
-# Copy nerfstudio folder and give ownership to user.
+RUN python3.10 -m pip install "fastapi[all]"
+
+# Copy nerfstudio folder.
 ADD . /nerfstudio
 
 # Install nerfstudio dependencies.
