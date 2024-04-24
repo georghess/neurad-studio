@@ -151,6 +151,8 @@ class ZodDataParserConfig(ADDataParserConfig):
 
     _target: Type = field(default_factory=lambda: Zod)
     """target class to instantiate"""
+    data: Path = Path("data/zod")
+    """Directory specifying location of data."""
     sequence: str = "000581"
     """Name of the scene."""
     data: Path = Path("data/zod")

@@ -31,7 +31,7 @@ from nerfstudio.configs.external_methods import ExternalMethodDummyTrainerConfig
 from nerfstudio.data.datamanagers.ad_datamanager import ADDataManagerConfig
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManagerConfig
-from nerfstudio.data.dataparsers.ad_dataparser import ADDataParserConfig
+from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
 from nerfstudio.engine.optimizers import AdamOptimizerConfig, AdamWOptimizerConfig, RAdamOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.engine.trainer import TrainerConfig
@@ -60,7 +60,7 @@ method_configs["nerfacto"] = TrainerConfig(
     mixed_precision=True,
     pipeline=VanillaPipelineConfig(
         datamanager=ParallelDataManagerConfig(
-            dataparser=ADDataParserConfig(),
+            dataparser=PandaSetDataParserConfig(),
             train_num_rays_per_batch=4096,
             eval_num_rays_per_batch=4096,
         ),
@@ -96,7 +96,7 @@ method_configs["nerfacto-big"] = TrainerConfig(
     mixed_precision=True,
     pipeline=VanillaPipelineConfig(
         datamanager=ParallelDataManagerConfig(
-            dataparser=ADDataParserConfig(),
+            dataparser=PandaSetDataParserConfig(),
             train_num_rays_per_batch=8192,
             eval_num_rays_per_batch=4096,
         ),
@@ -140,7 +140,7 @@ method_configs["nerfacto-huge"] = TrainerConfig(
     mixed_precision=True,
     pipeline=VanillaPipelineConfig(
         datamanager=ParallelDataManagerConfig(
-            dataparser=ADDataParserConfig(),
+            dataparser=PandaSetDataParserConfig(),
             train_num_rays_per_batch=16384,
             eval_num_rays_per_batch=4096,
         ),
@@ -187,6 +187,7 @@ method_configs["nerfacto-lidar"] = TrainerConfig(
     max_num_iterations=30000,
     mixed_precision=True,
     pipeline=ADPipelineConfig(
+        datamanager=ADDataManagerConfig(dataparser=PandaSetDataParserConfig()),
         calc_fid_steps=(99999999,),
         model=LidarNerfactoModelConfig(
             eval_num_rays_per_chunk=1 << 15,
@@ -221,7 +222,7 @@ method_configs["splatfacto"] = TrainerConfig(
     mixed_precision=False,
     pipeline=VanillaPipelineConfig(
         datamanager=FullImageDatamanagerConfig(
-            dataparser=ADDataParserConfig(),  # load_3D_points=True),
+            dataparser=PandaSetDataParserConfig(sequence="028"),  # use static sequence
             cache_images_type="uint8",
         ),
         model=SplatfactoModelConfig(),
@@ -270,7 +271,7 @@ method_configs["splatfacto-big"] = TrainerConfig(
     mixed_precision=False,
     pipeline=VanillaPipelineConfig(
         datamanager=FullImageDatamanagerConfig(
-            dataparser=ADDataParserConfig(),  # load_3D_points=True),
+            dataparser=PandaSetDataParserConfig(sequence="028"),  # use static sequence
             cache_images_type="uint8",
         ),
         model=SplatfactoModelConfig(
@@ -321,7 +322,7 @@ method_configs["neurad"] = TrainerConfig(
     mixed_precision=True,
     pipeline=ADPipelineConfig(
         calc_fid_steps=(99999999,),
-        datamanager=ADDataManagerConfig(dataparser=ADDataParserConfig(add_missing_points=True)),
+        datamanager=ADDataManagerConfig(dataparser=PandaSetDataParserConfig(add_missing_points=True)),
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
@@ -371,6 +372,7 @@ def _scaled_neurad_training(config: TrainerConfig, scale: float, newname: str) -
     config.steps_per_eval_image = int(config.steps_per_eval_image * scale)
     config.steps_per_eval_all_images = int(config.steps_per_eval_all_images * scale)
     config.steps_per_save = int(config.steps_per_save * scale)
+    assert isinstance(config.pipeline, ADPipelineConfig)
     config.pipeline.calc_fid_steps = tuple(int(scale * s) for s in config.pipeline.calc_fid_steps)
     for optimizer in config.optimizers.values():
         optimizer["scheduler"].max_steps = int(optimizer["scheduler"].max_steps * scale)

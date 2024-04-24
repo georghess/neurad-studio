@@ -24,14 +24,12 @@ import tyro
 from nerfstudio.data.dataparsers.argoverse2_dataparser import Argoverse2DataParserConfig
 from nerfstudio.data.dataparsers.base_dataparser import DataParserConfig
 from nerfstudio.data.dataparsers.kittimot_dataparser import KittiMotDataParserConfig
-from nerfstudio.data.dataparsers.minimal_dataparser import MinimalDataParserConfig
 from nerfstudio.data.dataparsers.nuscenes_dataparser import NuScenesDataParserConfig
 from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
 from nerfstudio.data.dataparsers.zod_dataparser import ZodDataParserConfig
 from nerfstudio.plugins.registry_dataparser import discover_dataparsers
 
 dataparsers = {
-    "minimal-parser": MinimalDataParserConfig(),
     "kittimot-data": KittiMotDataParserConfig(),
     "nuscenes-data": NuScenesDataParserConfig(),
     "argoverse2-data": Argoverse2DataParserConfig(),

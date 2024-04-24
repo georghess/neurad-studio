@@ -77,7 +77,7 @@ class KittiMotDataParserConfig(ADDataParserConfig):
     sequence: str = "0006"
     """Name of the scene."""
     data: Path = Path("data/kittimot")
-    """Path to ZOD dataset."""
+    """Path to KITTI-MOT dataset."""
     split: Literal["training"] = "training"  # we do not have labels for testing set...
     """Which split to use."""
     cameras: Tuple[Literal["image_02", "image_03", "none", "all"], ...] = ("image_02", "image_03")

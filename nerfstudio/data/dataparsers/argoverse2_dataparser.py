@@ -143,7 +143,7 @@ class Argoverse2DataParserConfig(ADDataParserConfig):
     """target class to instantiate"""
     sequence: str = "2b044433-ddc1-3580-b560-d46474934089"
     """name of the sequence to use"""
-    data: Path = Path("data/argoverse2")
+    data: Path = Path("data/av2")
     """path to the dataset"""
     cameras: Tuple[
         Literal[

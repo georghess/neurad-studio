@@ -114,6 +114,8 @@ class PandaSetDataParserConfig(ADDataParserConfig):
 
     _target: Type = field(default_factory=lambda: PandaSet)
     """target class to instantiate"""
+    data: Path = Path("data/pandaset")
+    """Directory specifying location of data."""
     sequence: str = "001"
     """Name of the scene."""
     cameras: Tuple[Literal["front", "front_left", "front_right", "back", "left", "right", "none", "all"], ...] = (
