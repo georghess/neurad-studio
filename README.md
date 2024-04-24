@@ -269,6 +269,17 @@ If you use this code or find our paper useful, please consider citing:
 
 # Contributors
 
-<a href="https://github.com/georghess/neurad-studio/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=georghess/neurad-studio" />
+<a href="https://github.com/georghess">
+    <img src="https://github.com/georghess.png" width="60px;" style="border-radius: 50%;"/>
 </a>
+<a href="https://github.com/carlinds">
+    <img src="https://github.com/carlinds.png" width="60px;" style="border-radius: 50%;"/>
+</a>
+<a href="https://github.com/atonderski">
+    <img src="https://github.com/atonderski.png" width="60px;" style="border-radius: 50%;"/>
+</a>
+<a href="https://github.com/wljungbergh">
+    <img src="https://github.com/wljungbergh.png" width="60px;" style="border-radius: 50%;"/>
+</a> 
+
+\+ [nerfstudio contributors](https://github.com/nerfstudio-project/nerfstudio/graphs/contributors)
