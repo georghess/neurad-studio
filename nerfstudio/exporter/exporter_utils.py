@@ -1,3 +1,4 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,12 +20,12 @@ Export utils such as structs, point cloud generation, and rendering code.
 
 from __future__ import annotations
 
+import platform
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import numpy as np
-import pymeshlab
 import torch
 from jaxtyping import Float
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
@@ -41,6 +42,12 @@ if TYPE_CHECKING:
     # Importing open3d can take ~1 second, so only do it below if we actually
     # need it.
     import open3d as o3d
+
+try:
+    import pymeshlab
+except ImportError:
+    if platform.machine() not in ["aarch64", "arm64"]:
+        raise  # pymeshlab is not available on ARM, so import error is expected
 
 
 @dataclass
