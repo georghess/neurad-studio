@@ -123,7 +123,14 @@ The following will train a _NeuRAD_ model, our recommended model for real world 
 
 ### Data preparation
 
-Begin by downloading [PandaSet](https://www.kaggle.com/datasets/usharengaraju/pandaset-dataset/data) and place it under ```data/pandaset```.
+Begin by downloading [PandaSet](https://www.kaggle.com/datasets/usharengaraju/pandaset-dataset/data) and unzip it under ```data/pandaset```.
+The dataset is no longer hosted by Scale but can be downloaded from the provided kaggle link.
+However, the fileformat differs from what is expected by the [pandaset devkit](https://github.com/scaleapi/pandaset-devkit).
+For compatability, run the following in the ```data/pandaset``` folder to convert `.pkl` to `.pkl.gz`
+
+```bash
+gzip -k */{lidar/*.pkl,annotations/{cuboids,semseg}/*.pkl}
+```
 
 ### Training
 
@@ -215,7 +222,7 @@ To add a dataset, create `nerfstudio/data/dataparsers/mydataset.py` containing o
 | 🚗 [nuScenes](https://www.nuscenes.org/)          | 6 cameras            |  32-beam lidar                   |
 | 🚗 [ZOD](https://zod.zenseact.com/)           | 1 camera            | 128-beam + 2 x 16-beam lidars                   |
 | 🚗 [Argoverse 2](https://www.argoverse.org/av2.html)   | 7 ring cameras + 2 stereo cameras            | 2 x 32-beam lidars                   |
-| 🚗 [PandaSet](https://pandaset.org/)         | 6 cameras | 64-beam lidar                                  |
+| 🚗 [PandaSet](https://pandaset.org/)([kaggle download](https://www.kaggle.com/datasets/usharengaraju/pandaset-dataset/data))         | 6 cameras | 64-beam lidar                                  |
 | 🚗 [KITTIMOT](https://www.cvlibs.net/datasets/kitti/eval_tracking.php) | 2 stereo cameras | 64-beam lidar
 
 
@@ -280,6 +287,6 @@ If you use this code or find our paper useful, please consider citing:
 </a>
 <a href="https://github.com/wljungbergh">
     <img src="https://github.com/wljungbergh.png" width="60px;" style="border-radius: 50%;"/>
-</a> 
+</a>
 
 \+ [nerfstudio contributors](https://github.com/nerfstudio-project/nerfstudio/graphs/contributors)
