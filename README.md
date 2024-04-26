@@ -147,6 +147,10 @@ Navigating to the link at the end of the terminal will load the webviewer. If yo
     <img width="800" alt="image" src="docs/_static/imgs/readme_viewer_neurad.png">
 </p>
 
+### Troubleshooting
+
+If you run into issues, it could be due to the training taking up too much memory. You can try to adjust the model parameters according to the neurad-tiny [vscode launch config](https://github.com/georghess/neurad-studio/blob/master/.vscode/launch.json#L51).
+
 ### Resume from checkpoint / visualize existing run
 
 It is possible to load a pretrained model by running
