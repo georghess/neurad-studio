@@ -13,14 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
+import base64
 import io
 
-import numpy as np
 import torch
 import tyro
 import uvicorn
-from fastapi import FastAPI, Response
-from PIL import Image
+from fastapi import FastAPI
+from fastapi.responses import PlainTextResponse
 from torch import Tensor
 
 from nerfstudio.scripts.closed_loop.models import ActorTrajectory, RenderInput
@@ -30,12 +30,12 @@ app = FastAPI()
 
 
 @app.get("/alive")
-async def alive() -> bool:
+def alive() -> bool:
     return True
 
 
 @app.get("/get_actors")
-async def get_actors() -> list[ActorTrajectory]:
+def get_actors() -> list[ActorTrajectory]:
     """Get actor trajectories."""
     actor_trajectories = cl_server.get_actor_trajectories()
     actor_trajectories = [ActorTrajectory.from_torch(act_traj) for act_traj in actor_trajectories]
@@ -43,31 +43,30 @@ async def get_actors() -> list[ActorTrajectory]:
 
 
 @app.post("/update_actors")
-async def update_actors(actor_trajectories: list[ActorTrajectory]) -> None:
+def update_actors(actor_trajectories: list[ActorTrajectory]) -> None:
     """Update actor trajectories (keys correspond to actor uuids)."""
     torch_actor_trajectories = [act_traj.to_torch() for act_traj in actor_trajectories]
     cl_server.update_actor_trajectories(torch_actor_trajectories)
 
 
-@app.post("/render_image", response_class=Response, responses={200: {"content": {"image/png": {}}}})
-async def render_image(data: RenderInput) -> Response:
+@app.post("/render_image", response_class=PlainTextResponse, responses={200: {"content": {"text/plain": {}}}})
+def render_image(data: RenderInput) -> PlainTextResponse:
     torch_pose = torch.tensor(data.pose, dtype=torch.float32)
     render = cl_server.get_image(torch_pose, data.timestamp, data.camera_name)
-    return Response(content=_torch_to_png(render), media_type="image/png")
+    return PlainTextResponse(content=_torch_to_bytestr(render), media_type="text/plain")
 
 
 @app.get("/start_time")
-async def get_start_time() -> int:
+def get_start_time() -> int:
     return int(cl_server.min_time * 1e6)
 
 
-def _torch_to_png(render: Tensor) -> bytes:
-    """Convert a torch tensor to a PNG image."""
-    img = Image.fromarray((render * 255).cpu().numpy().astype(np.uint8))
-    image_stream = io.BytesIO()
-    img.save(image_stream, format="PNG")
-    image_bytes = image_stream.getvalue()
-    return image_bytes
+def _torch_to_bytestr(render: Tensor) -> bytes:
+    """Convert a torch tensor to a base64 encoded bytestring."""
+    buff = io.BytesIO()
+    img = (render * 255).to(torch.uint8).cpu()
+    torch.save(img, buff)
+    return base64.b64encode(buff.getvalue())
 
 
 if __name__ == "__main__":
