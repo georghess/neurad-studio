@@ -227,7 +227,13 @@ To add a dataset, create `nerfstudio/data/dataparsers/mydataset.py` containing o
 
 ## Adding Methods
 
-Nerfstudio has made it easy to add new methods, see [here](https://docs.nerf.studio/developer_guides/new_methods.html) for details. We plan to examplify this using our UniSim reimplementation, to be released soon.
+Nerfstudio has made it easy to add new methods, see [here](https://docs.nerf.studio/developer_guides/new_methods.html) for details. We have added [our UniSim reimplementation](https://github.com/carlinds/unisim) as a plugin, which can be run as any other method using the `ns-train` command:
+```bash
+ns-train unisim pandaset-data --data data/pandaset
+```
+and follow the instructions in the terminal.
+
+See [our UniSim repo](https://github.com/carlinds/unisim) for reference on how to add a new method as a plugin.
 
 # Key features
 - Dataparser for multiple autonomous driving datasets including
@@ -243,7 +249,8 @@ Nerfstudio has made it easy to add new methods, see [here](https://docs.nerf.stu
 
 # Planned Features/TODOs
 
-- [ ] UniSim plug-in
+- [ ] 3DGS implementation supporting dynamic objects
+- [x] UniSim plug-in
 - [x] Release code
 
 # Built On
