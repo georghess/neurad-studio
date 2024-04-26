@@ -60,8 +60,8 @@ class MetricTrackerConfig(InstantiateConfig):
 
     _target: Type = field(default_factory=lambda: MetricTracker)
     """target class to instantiate"""
-    metric: Optional[str] = "psnr"
-    """The metric to track for early stopping and checkpoint saving."""
+    metric: Optional[str] = None
+    """The metric to track for early stopping and checkpoint saving. None means no metric tracking."""
     higher_is_better: bool = True
     """Whether a higher value of the metric is better."""
     margin: float = 0.0
@@ -76,6 +76,8 @@ class MetricTracker:
         self.best, self.latest = None, None
 
     def did_degrade(self, fallback: bool = False) -> bool:
+        if self.config.metric is None:
+            return False  # no metric to track
         if (self.latest is None) or (self.best is None):
             return fallback  # we can't tell
         # apply margin to the best value (to be robust to noise in the metric)
@@ -87,10 +89,10 @@ class MetricTracker:
 
     def update(self, metrics: Dict[str, float]) -> None:
         self.latest = metrics.get(self.config.metric, None) if self.config.metric else None
-        if isinstance(self.latest, torch.Tensor):
-            self.latest = self.latest.item()
         if self.latest is None:
             return
+        if isinstance(self.latest, torch.Tensor):
+            self.latest = self.latest.item()
         if self.best is None:
             self.best = self.latest
         elif self._is_new_better(self.best, self.latest):
