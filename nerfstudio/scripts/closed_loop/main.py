@@ -15,15 +15,17 @@ from __future__ import annotations
 
 import base64
 import io
+from typing import Literal, Union
 
+import numpy as np
 import torch
 import tyro
 import uvicorn
-from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi import FastAPI, HTTPException, Response
+from PIL import Image
 from torch import Tensor
 
-from nerfstudio.scripts.closed_loop.models import ActorTrajectory, RenderInput
+from nerfstudio.scripts.closed_loop.models import ActorTrajectory, ImageFormat, RenderInput
 from nerfstudio.scripts.closed_loop.server import ClosedLoopServer
 
 app = FastAPI()
@@ -49,11 +51,24 @@ def update_actors(actor_trajectories: list[ActorTrajectory]) -> None:
     cl_server.update_actor_trajectories(torch_actor_trajectories)
 
 
-@app.post("/render_image", response_class=PlainTextResponse, responses={200: {"content": {"text/plain": {}}}})
-def render_image(data: RenderInput) -> PlainTextResponse:
+@app.get(
+    "/image",
+    response_class=Response,
+    responses={200: {"content": {"text/plain": {}, "image/png": {}, "image/jpeg": {}}}},
+)
+def get_image(data: RenderInput) -> Response:
     torch_pose = torch.tensor(data.pose, dtype=torch.float32)
     render = cl_server.get_image(torch_pose, data.timestamp, data.camera_name)
-    return PlainTextResponse(content=_torch_to_bytestr(render), media_type="text/plain")
+    if data.image_format == ImageFormat.raw:
+        return Response(content=_torch_to_bytestr(render), media_type="text/plain")
+    elif data.image_format == ImageFormat.png:
+        return Response(content=_torch_to_img(render, "png"), media_type="image/png")
+    elif data.image_format in (ImageFormat.jpg, ImageFormat.jpeg):
+        return Response(content=_torch_to_img(render, "jpeg"), media_type="text/jpeg")
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid image format: {data.image_format}, must be 'raw', 'png', 'jpg', or 'jpeg'"
+        )
 
 
 @app.get("/start_time")
@@ -67,6 +82,17 @@ def _torch_to_bytestr(render: Tensor) -> bytes:
     img = (render * 255).to(torch.uint8).cpu()
     torch.save(img, buff)
     return base64.b64encode(buff.getvalue())
+
+
+def _torch_to_img(render: Tensor, format: Union[Literal["jpeg"], Literal["png"]]) -> bytes:
+    """Convert a torch tensor to a PNG or JPG image."""
+    if format not in ("jpeg", "png"):
+        raise ValueError(f"Invalid format: {format}")
+
+    img = Image.fromarray((render * 255).cpu().numpy().astype(np.uint8))
+    buff = io.BytesIO()
+    img.save(buff, format=format.upper())
+    return buff.getvalue()
 
 
 if __name__ == "__main__":

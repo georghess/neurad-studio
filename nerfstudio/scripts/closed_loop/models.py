@@ -13,11 +13,19 @@
 # limitations under the License.
 from __future__ import annotations
 
+from enum import Enum
 from typing import List, TypedDict
 
 import torch
 from pydantic import BaseModel
 from torch import Tensor
+
+
+class ImageFormat(str, Enum):
+    raw = "raw"  # will return a raw tensor, works good when sending across same machine
+    png = "png"  # more suitable if sent over network
+    jpg = "jpg"  # more suitable if sent over network, pseudo for jpeg
+    jpeg = "jpeg"  # more suitable if sent over network
 
 
 class TrajectoryDict(TypedDict):
@@ -66,3 +74,5 @@ class RenderInput(BaseModel):
     """Timestamp in microseconds"""
     camera_name: str
     """Camera name"""
+    image_format: ImageFormat = ImageFormat.raw
+    """What format to return the image in. Defaults to raw tensor."""
