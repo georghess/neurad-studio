@@ -51,8 +51,8 @@ def update_actors(actor_trajectories: list[ActorTrajectory]) -> None:
     cl_server.update_actor_trajectories(torch_actor_trajectories)
 
 
-@app.get(
-    "/image",
+@app.post(
+    "/render_image",
     response_class=Response,
     responses={200: {"content": {"text/plain": {}, "image/png": {}, "image/jpeg": {}}}},
 )
