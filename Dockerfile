@@ -138,9 +138,6 @@ RUN git clone --recursive https://github.com/cvg/pixel-perfect-sfm.git && \
     python3.10 -m pip install --no-cache-dir -e . && \
     cd ..
 
-RUN python3.10 -m pip install --no-cache-dir omegaconf
-RUN python3.10 -m pip install "fastapi[all]"
-
 # Copy nerfstudio folder.
 ADD . /nerfstudio
 
