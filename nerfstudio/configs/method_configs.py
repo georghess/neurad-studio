@@ -383,7 +383,6 @@ def _scaled_neurad_training(config: TrainerConfig, scale: float, newname: str) -
 
 # Bigger, better, longer, stronger
 method_configs["neurader"] = _scaled_neurad_training(method_configs["neurad"], 2.5, "neurader")
-method_configs["neurader"].method_name = "neurader"
 for optimizer in method_configs["neurader"].optimizers.values():
     optimizer["optimizer"].lr *= 0.5
     optimizer["scheduler"].lr_final *= 0.5
@@ -405,6 +404,9 @@ method_configs["neuradest"] = _scaled_neurad_training(method_configs["neurader"]
 method_configs["neuradest-scaleopt"] = _scaled_neurad_training(
     method_configs["neurader-scaleopt"], 3, "neuradest-scaleopt"
 )
+for optimizer in method_configs["neuradest-scaleopt"].optimizers.values():
+    optimizer["optimizer"].lr *= 0.5
+    optimizer["scheduler"].lr_final *= 0.5
 
 # Configurations matching the paper (disable temporal appearance and actor flip)
 method_configs["neurad-paper"] = deepcopy(method_configs["neurad"])
