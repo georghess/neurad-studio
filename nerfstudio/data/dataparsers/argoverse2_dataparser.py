@@ -187,9 +187,9 @@ class Argoverse2(ADDataParser):
     @property
     def actor_transform(self) -> torch.Tensor:
         """Argo uses x-forward, so we need to rotate to x-right."""
-        wlh_to_lwh = np.eye(4)
+        wlh_to_lwh = np.eye(4, dtype=np.float32)
         wlh_to_lwh[:3, :3] = WLH_TO_LWH
-        return torch.from_numpy(wlh_to_lwh)
+        return torch.from_numpy(wlh_to_lwh)[:3, :]
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
         """Returns camera info and image filenames."""

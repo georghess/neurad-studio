@@ -64,10 +64,10 @@ TRACKING_TO_GT_CLASSNAME_MAPPING = {
 # So we need to rotate the actor coordinate system by 90 degrees around z-axis
 WLH_TO_LWH = np.array(
     [
-        [0, 1, 0, 0],
-        [-1, 0, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1],
+        [0, 1.0, 0, 0],
+        [-1.0, 0, 0, 0],
+        [0, 0, 1.0, 0],
+        [0, 0, 0, 1.0],
     ]
 )
 HORIZONTAL_BEAM_DIVERGENCE = 0.00333333333  # radians, given as 4 inches at 100 feet
@@ -185,7 +185,7 @@ class NuScenes(ADDataParser):
     @property
     def actor_transform(self) -> torch.Tensor:
         """Nuscenes uses x-forward, so we need to rotate to x-right."""
-        return torch.from_numpy(WLH_TO_LWH)
+        return torch.from_numpy(WLH_TO_LWH)[:3, :]
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
         if "all" in self.config.cameras:

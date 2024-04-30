@@ -65,7 +65,7 @@ MARS_SEQ_TO_END_FRAME = {str(i).zfill(4): -1 for i in range(1, 21)}
 MARS_SEQ_TO_START_FRAME["0006"] = 5  # taken from the paper
 MARS_SEQ_TO_END_FRAME["0006"] = 260  # taken from the paper
 
-RIGHT_FRONT_UP2RIGHT_DOWN_FRONT = np.array([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
+RIGHT_FRONT_UP2RIGHT_DOWN_FRONT = np.array([[1.0, 0, 0, 0], [0, 0, -1.0, 0], [0, 1.0, 0, 0], [0, 0, 0, 1.0]])
 
 
 @dataclass
@@ -107,7 +107,7 @@ class KittiMot(ADDataParser):
     @property
     def actor_transform(self) -> Tensor:
         """The transform needed to convert the actor poses to our desired format (x-right, y-forward, z-up)."""
-        return torch.from_numpy(RIGHT_FRONT_UP2RIGHT_DOWN_FRONT)
+        return torch.from_numpy(RIGHT_FRONT_UP2RIGHT_DOWN_FRONT)[:3, :]
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
         """Returns camera info and image filenames."""
