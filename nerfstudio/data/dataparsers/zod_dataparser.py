@@ -148,10 +148,10 @@ class ZodDataParserConfig(ADDataParserConfig):
 
     _target: Type = field(default_factory=lambda: Zod)
     """target class to instantiate"""
-    data: Path = Path("data/zod")
-    """Path to ZOD dataset."""
     sequence: str = "000581"
     """Name of the scene."""
+    data: Path = Path("data/zod")
+    """Path to ZOD dataset."""
     subset: Literal["sequences"] = "sequences"  # only sequences supported currently
     """Dataset subset."""
     version: Literal["mini", "full"] = "full"

@@ -127,11 +127,9 @@ class NuScenesDataParserConfig(ADDataParserConfig):
 
     _target: Type = field(default_factory=lambda: NuScenes)
     """target class to instantiate"""
-    data: Path = Path("data/nuscenes")
-    """Directory specifying location of data."""
     sequence: str = "0103"
     """Name of the scene."""
-    data: Path = Path("/mnt/local/NuScenes")
+    data: Path = Path("data/nuscenes")
     """Path to NuScenes dataset."""
     version: Literal["v1.0-mini", "v1.0-trainval"] = "v1.0-trainval"
     """Dataset version."""
