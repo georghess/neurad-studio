@@ -61,9 +61,6 @@ ZOD_SKIP_ELEVATION_CHANNELS = {
     )
 }  # these are channel indices that correspond to a low elevation angle, as per the VLS128 manual.
 
-HOOD_HEIGHT = 740
-
-
 HORIZONTAL_BEAM_DIVERGENCE = 3.0e-3  # radians, or meters at a distance of 1m
 VERTICAL_BEAM_DIVERGENCE = 1.5e-3  # radians, or meters at a distance of 1m
 HOOD_HEIGHT = 750  # px
@@ -152,11 +149,9 @@ class ZodDataParserConfig(ADDataParserConfig):
     _target: Type = field(default_factory=lambda: Zod)
     """target class to instantiate"""
     data: Path = Path("data/zod")
-    """Directory specifying location of data."""
+    """Path to ZOD dataset."""
     sequence: str = "000581"
     """Name of the scene."""
-    data: Path = Path("data/zod")
-    """Path to ZOD dataset."""
     subset: Literal["sequences"] = "sequences"  # only sequences supported currently
     """Dataset subset."""
     version: Literal["mini", "full"] = "full"
