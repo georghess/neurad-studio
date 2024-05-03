@@ -57,6 +57,9 @@ TCNN_CUDA_ARCHITECTURES="90;89;86;80;75" python3.10 -m pip install --no-cache-di
 # Install nerfstudio dependencies.
 cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .
 
+# Make sure viser client is built
+python3.10 -c "import viser; viser.ViserServer()"
+
 # Change working directory
 mkdir -p /workspace
 cd /workspace

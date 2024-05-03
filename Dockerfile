@@ -144,6 +144,9 @@ ADD . /nerfstudio
 # Install nerfstudio dependencies.
 RUN cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .
 
+# Make sure viser client is built
+RUN python -c "import viser; viser.ViserServer()"
+
 # Change working directory
 WORKDIR /workspace
 
