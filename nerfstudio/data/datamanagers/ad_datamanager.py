@@ -80,9 +80,12 @@ class ADDataManager(ImageLidarDataManager):
             return
 
         # Change train
-        for func_queue in self.func_queues:
-            func_queue.put((_worker_change_patch_sampler, (patch_scale, patch_size), {}))
-        self.clear_data_queue()  # remove any old, invalid, batch
+        if self.use_mp:
+            for func_queue in self.func_queues:
+                func_queue.put((_worker_change_patch_sampler, (patch_scale, patch_size), {}))
+            self.clear_data_queue()  # remove any old, invalid, batch
+        else:
+            _worker_change_patch_sampler(self.data_procs[0], patch_scale, patch_size)
 
         # Change eval
         self.eval_pixel_sampler.patch_scale = patch_scale
