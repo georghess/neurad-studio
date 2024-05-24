@@ -293,5 +293,8 @@ If you use this code or find our paper useful, please consider citing:
 <a href="https://github.com/wljungbergh">
     <img src="https://github.com/wljungbergh.png" width="60px;" style="border-radius: 50%;"/>
 </a>
+<a href="https://github.com/MartinEthier">
+    <img src="https://github.com/MartinEthier.png" width="60px;" style="border-radius: 50%;"/>
+</a>
 
 \+ [nerfstudio contributors](https://github.com/nerfstudio-project/nerfstudio/graphs/contributors)
