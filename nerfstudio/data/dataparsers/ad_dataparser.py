@@ -276,8 +276,8 @@ class ADDataParser(DataParser):
         end_time = times.max().item()
         start_time = times.min().item()
         duration = end_time - start_time
-        start_time += duration * self.config.dataset_start_fraction
         end_time = start_time + duration * self.config.dataset_end_fraction
+        start_time += duration * self.config.dataset_start_fraction
 
         cameras, img_filenames = _filter_sensordata_on_time(cameras, img_filenames, start_time, end_time)
         lidars, pc_filenames = _filter_sensordata_on_time(lidars, pc_filenames, start_time, end_time)
