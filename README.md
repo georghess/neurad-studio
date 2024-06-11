@@ -106,6 +106,11 @@ pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindi
 We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v1.0.3/docs/quickstart/installation.md) for more installation support.
 
 ### Installing NeuRAD
+Some users need to upgrade dill prior to the next step
+```bash
+pip install dill --upgrade
+```
+and then
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
