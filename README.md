@@ -100,17 +100,16 @@ For CUDA 11.8:
 pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 
 conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
+
+# Some need to upgrade dill prior to tiny-cuda-nn install
+pip install dill --upgrade
+
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
 
 We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v1.0.3/docs/quickstart/installation.md) for more installation support.
 
 ### Installing NeuRAD
-Some users need to upgrade dill prior to the next step
-```bash
-pip install dill --upgrade
-```
-and then
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
@@ -223,10 +222,10 @@ To add a dataset, create `nerfstudio/data/dataparsers/mydataset.py` containing o
 | Data                                                                                          | Cameras | Lidars                                                      |
 | --------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------- |
 | 🚗 [nuScenes](https://www.nuscenes.org/)          | 6 cameras            |  32-beam lidar                   |
-| 🚗 [ZOD](https://zod.zenseact.com/)           | 1 camera            | 128-beam + 2 x 16-beam lidars                   |
+| 🚗 [ZOD](https://zod.zenseact.com/) ([Annotations](https://github.com/user-attachments/files/15773566/auto_annotations.zip))          | 1 camera            | 128-beam + 2 x 16-beam lidars                   |
 | 🚗 [Argoverse 2](https://www.argoverse.org/av2.html)   | 7 ring cameras + 2 stereo cameras            | 2 x 32-beam lidars                   |
-| 🚗 [PandaSet](https://pandaset.org/)([huggingface download](https://huggingface.co/datasets/georghess/pandaset))         | 6 cameras | 64-beam lidar                                  |
-| 🚗 [KITTIMOT](https://www.cvlibs.net/datasets/kitti/eval_tracking.php) | 2 stereo cameras | 64-beam lidar
+| 🚗 [PandaSet](https://pandaset.org/) ([huggingface download](https://huggingface.co/datasets/georghess/pandaset))         | 6 cameras | 64-beam lidar                                  |
+| 🚗 [KITTIMOT](https://www.cvlibs.net/datasets/kitti/eval_tracking.php) ([Timestamps](https://www.cvlibs.net/datasets/kitti/raw_data.php)) | 2 stereo cameras | 64-beam lidar
 
 
 
