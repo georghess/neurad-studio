@@ -81,10 +81,10 @@ Our installation steps largely follow Nerfstudio, with some added dataset-specif
 
 ### Create environment
 
-NeuRAD requires `python >= 3.8`. We recommend using conda to manage dependencies. Make sure to install [Conda](https://docs.conda.io/miniconda.html) before proceeding.
+NeuRAD requires `python >= 3.10`. We recommend using conda to manage dependencies. Make sure to install [Conda](https://docs.conda.io/miniconda.html) before proceeding.
 
 ```bash
-conda create --name neurad -y python=3.8
+conda create --name neurad -y python=3.10
 conda activate neurad
 pip install --upgrade pip
 ```
@@ -105,6 +105,11 @@ conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 pip install dill --upgrade
 
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+```
+
+For support of Waymo-Open-Dataset v2:
+```bash
+pip install waymo-open-dataset-tf-2-11-0==1.6.1
 ```
 
 We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v1.0.3/docs/quickstart/installation.md) for more installation support.
@@ -226,8 +231,9 @@ To add a dataset, create `nerfstudio/data/dataparsers/mydataset.py` containing o
 | 🚗 [Argoverse 2](https://www.argoverse.org/av2.html)   | 7 ring cameras + 2 stereo cameras            | 2 x 32-beam lidars                   |
 | 🚗 [PandaSet](https://pandaset.org/) ([huggingface download](https://huggingface.co/datasets/georghess/pandaset))         | 6 cameras | 64-beam lidar                                  |
 | 🚗 [KITTIMOT](https://www.cvlibs.net/datasets/kitti/eval_tracking.php) ([Timestamps](https://www.cvlibs.net/datasets/kitti/raw_data.php)) | 2 stereo cameras | 64-beam lidar
+| 🚗 [Waymo v2](https://waymo.com/open/)         | 5 cameras | 64-beam lidar   
 
-
+A brief introduction about Waymo dataparser for NeuRAD can be found in [waymo_dataparser.md](./nerfstudio/data//dataparsers/waymo_dataparser.md)
 
 ## Adding Methods
 

@@ -1159,16 +1159,12 @@ class DatasetRender(BaseRender):
                             if "ray_drop_prob" in lidar_output:
                                 points_in_local = points_in_local[(lidar_output["ray_drop_prob"] < 0.5).squeeze(-1)]
 
-                            points_in_world = (
-                                lidar.lidar_to_worlds[0]
-                                @ torch.cat(
-                                    [
-                                        points_in_local,
-                                        torch.ones_like(points_in_local[..., :1]),
-                                    ],
-                                    dim=-1,
-                                ).unsqueeze(-1)
-                            ).squeeze()
+                            points_in_world = to_world(lidar.lidar_to_worlds[0], points_in_local)
+                            # get ground truth for comparison
+                            gt_point_in_world = to_world(lidar.lidar_to_worlds[0], batch["lidar"][..., :3])
+                            plot_lidar_points(
+                                gt_point_in_world.cpu().detach().numpy(), output_path / f"gt-lidar_{lidar_idx}.png"
+                            )
                             plot_lidar_points(
                                 points_in_world.cpu().detach().numpy(), output_path / f"lidar_{lidar_idx}.png"
                             )
@@ -1188,6 +1184,20 @@ class DatasetRender(BaseRender):
         for split in self.pose_source.split("+"):
             table.add_row(f"Outputs {split}", str(self.output_path / split))
         CONSOLE.print(Panel(table, title="[bold][green]:tada: Render on split {} Complete :tada:[/bold]", expand=False))
+
+
+def to_world(l2w, points):
+    points_in_world = (
+        l2w
+        @ torch.cat(
+            [
+                points,
+                torch.ones_like(points[..., :1]),
+            ],
+            dim=-1,
+        ).unsqueeze(-1)
+    ).squeeze()
+    return points_in_world
 
 
 def plot_lidar_points(points, output_path, cmin=-6.0, cmax=5.0, width=1920, height=1080, ranges=[100, 200, 10]):

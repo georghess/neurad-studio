@@ -921,12 +921,22 @@ class Cameras(TensorDataclass):
 
         if self.metadata and "rolling_shutter_offsets" in self.metadata and "velocities" in self.metadata:
             cam_idx = camera_indices.squeeze(-1)
-            heights, rows = self.height[cam_idx], coords[..., 0:1]
-            duration = self.metadata["rolling_shutter_offsets"][cam_idx].diff()
-            time_offsets = rows / heights * duration + self.metadata["rolling_shutter_offsets"][cam_idx][..., 0:1]
+            offsets = self.metadata["rolling_shutter_offsets"][cam_idx]
+            duration = offsets.diff()
+            if "rs_direction" in metadata and metadata["rs_direction"] == "Horizontal":
+                # wod (LEFT_TO_RIGHT or RIGHT_TO_LEFT)
+                width, cols = self.width[cam_idx], coords[..., 1:2]
+                time_offsets = cols / width * duration + offsets[..., 0:1]
+            else:
+                # pandaset (TOP_TO_BOTTOM)
+                heights, rows = self.height[cam_idx], coords[..., 0:1]
+                time_offsets = rows / heights * duration + offsets[..., 0:1]
+
             origins = origins + self.metadata["velocities"][cam_idx] * time_offsets
             times = times + time_offsets
             del metadata["rolling_shutter_offsets"]  # it has served its purpose
+            if "rs_direction" in metadata:
+                del metadata["rs_direction"]  # it has served its purpose
 
         return RayBundle(
             origins=origins,
