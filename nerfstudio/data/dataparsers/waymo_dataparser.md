@@ -44,3 +44,9 @@ Notes: All above results were obtained with the same hyperparameters and configu
 ## Links
 
 Results has been done with waymo open dataset [v2.0.0, gcloud link](https://console.cloud.google.com/storage/browser/waymo_open_dataset_v_2_0_0)
+
+## Contributors
+
+- Lei Lei, Leddartech
+- Julien Stanguennec, Leddartech
+- Pierre Merriaux, Leddartech
