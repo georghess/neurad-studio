@@ -107,7 +107,7 @@ pip install dill --upgrade
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
 
-For support of Waymo-Open-Dataset v2:
+For support of Waymo-Open-Dataset v2 (requires python3.10, also dependencies from this package are very strict so cannot add it to pyproject.toml and need install first):
 ```bash
 pip install waymo-open-dataset-tf-2-11-0==1.6.1
 ```
