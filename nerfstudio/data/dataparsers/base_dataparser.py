@@ -68,7 +68,7 @@ class DataparserOutputs:
     """
     dataparser_transform: Float[Tensor, "3 4"] = torch.eye(4)[:3, :]
     """Transform applied by the dataparser to the entire scene."""
-    actor_transform: Float[Tensor, "3 4"] = torch.eye(4)[:3, :]
+    actor_transform: Float[Tensor, "3 4"] = torch.eye(4, dtype=torch.float32)[:3, :]
     """Transform applied by the dataparser to each actor's local frame."""
     dataparser_scale: float = 1.0
     """Scale applied by the dataparser."""

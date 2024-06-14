@@ -61,9 +61,6 @@ ZOD_SKIP_ELEVATION_CHANNELS = {
     )
 }  # these are channel indices that correspond to a low elevation angle, as per the VLS128 manual.
 
-HOOD_HEIGHT = 740
-
-
 HORIZONTAL_BEAM_DIVERGENCE = 3.0e-3  # radians, or meters at a distance of 1m
 VERTICAL_BEAM_DIVERGENCE = 1.5e-3  # radians, or meters at a distance of 1m
 HOOD_HEIGHT = 750  # px
@@ -194,7 +191,7 @@ class Zod(ADDataParser):
     @property
     def actor_transform(self) -> torch.Tensor:
         """ZOD uses x-forward, so we need to rotate to x-right."""
-        return torch.from_numpy(WLH_TO_LWH)
+        return torch.from_numpy(WLH_TO_LWH)[:3, :]
 
     def _get_lane_shift_sign(self, sequence: str) -> Literal[-1, 1]:
         return LANE_SHIFT_SIGN.get(sequence, 1)

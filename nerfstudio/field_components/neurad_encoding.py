@@ -26,6 +26,7 @@ from nerfstudio.field_components.spatial_distortions import ScaledSceneContracti
 from nerfstudio.model_components.dynamic_actors import DynamicActors
 from nerfstudio.utils.math import GaussiansStd
 from nerfstudio.utils.poses import inverse as pose_inverse
+from nerfstudio.utils.rich_utils import CONSOLE
 
 EPS = 1.0e-7
 
@@ -106,8 +107,9 @@ class NeuRADHashEncoding(nn.Module):
             max_res=config.static.max_res,
             log2_hashmap_size=config.static.log2_hashmap_size,
         )
-
-        if config.actor.use_4d_hashgrid:
+        if config.actor.use_4d_hashgrid and implementation == "torch":
+            CONSOLE.print("4D hashgrid is not supported with torch implementation, falling back multiple grids.")
+        if config.actor.use_4d_hashgrid and implementation == "tcnn":
             self._get_actor_features = self._get_actor_features_fast
             n_grids, n_input_dims = 1, 4
         else:

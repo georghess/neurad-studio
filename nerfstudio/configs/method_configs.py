@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from copy import deepcopy
+from pathlib import Path
 from typing import Dict, Union
 
 import tyro
@@ -31,7 +32,7 @@ from nerfstudio.configs.external_methods import ExternalMethodDummyTrainerConfig
 from nerfstudio.data.datamanagers.ad_datamanager import ADDataManagerConfig
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManagerConfig
-from nerfstudio.data.dataparsers.ad_dataparser import ADDataParserConfig
+from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
 from nerfstudio.engine.optimizers import AdamOptimizerConfig, AdamWOptimizerConfig, RAdamOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.engine.trainer import TrainerConfig
@@ -60,7 +61,7 @@ method_configs["nerfacto"] = TrainerConfig(
     mixed_precision=True,
     pipeline=VanillaPipelineConfig(
         datamanager=ParallelDataManagerConfig(
-            dataparser=ADDataParserConfig(),
+            dataparser=PandaSetDataParserConfig(),
             train_num_rays_per_batch=4096,
             eval_num_rays_per_batch=4096,
         ),
@@ -96,7 +97,7 @@ method_configs["nerfacto-big"] = TrainerConfig(
     mixed_precision=True,
     pipeline=VanillaPipelineConfig(
         datamanager=ParallelDataManagerConfig(
-            dataparser=ADDataParserConfig(),
+            dataparser=PandaSetDataParserConfig(),
             train_num_rays_per_batch=8192,
             eval_num_rays_per_batch=4096,
         ),
@@ -140,7 +141,7 @@ method_configs["nerfacto-huge"] = TrainerConfig(
     mixed_precision=True,
     pipeline=VanillaPipelineConfig(
         datamanager=ParallelDataManagerConfig(
-            dataparser=ADDataParserConfig(),
+            dataparser=PandaSetDataParserConfig(),
             train_num_rays_per_batch=16384,
             eval_num_rays_per_batch=4096,
         ),
@@ -187,6 +188,7 @@ method_configs["nerfacto-lidar"] = TrainerConfig(
     max_num_iterations=30000,
     mixed_precision=True,
     pipeline=ADPipelineConfig(
+        datamanager=ADDataManagerConfig(dataparser=PandaSetDataParserConfig()),
         calc_fid_steps=(99999999,),
         model=LidarNerfactoModelConfig(
             eval_num_rays_per_chunk=1 << 15,
@@ -221,7 +223,7 @@ method_configs["splatfacto"] = TrainerConfig(
     mixed_precision=False,
     pipeline=VanillaPipelineConfig(
         datamanager=FullImageDatamanagerConfig(
-            dataparser=ADDataParserConfig(),  # load_3D_points=True),
+            dataparser=PandaSetDataParserConfig(sequence="028"),  # use static sequence
             cache_images_type="uint8",
         ),
         model=SplatfactoModelConfig(),
@@ -270,7 +272,7 @@ method_configs["splatfacto-big"] = TrainerConfig(
     mixed_precision=False,
     pipeline=VanillaPipelineConfig(
         datamanager=FullImageDatamanagerConfig(
-            dataparser=ADDataParserConfig(),  # load_3D_points=True),
+            dataparser=PandaSetDataParserConfig(sequence="028"),  # use static sequence
             cache_images_type="uint8",
         ),
         model=SplatfactoModelConfig(
@@ -321,7 +323,7 @@ method_configs["neurad"] = TrainerConfig(
     mixed_precision=True,
     pipeline=ADPipelineConfig(
         calc_fid_steps=(99999999,),
-        datamanager=ADDataManagerConfig(dataparser=ADDataParserConfig(add_missing_points=True)),
+        datamanager=ADDataManagerConfig(dataparser=PandaSetDataParserConfig(add_missing_points=True)),
         model=NeuRADModelConfig(
             eval_num_rays_per_chunk=1 << 15,
             camera_optimizer=CameraOptimizerConfig(mode="off"),  # SO3xR3
@@ -360,6 +362,7 @@ method_configs["neurad-scaleopt"].method_name = "neurad-scaleopt"
 method_configs["neurad-scaleopt"].pipeline.model.camera_optimizer = ScaledCameraOptimizerConfig(
     weights=(1.0, 1.0, 0.01, 0.01, 0.01, 1.0),  # xrot, yrot, zrot, xtrans, ytrans, ztrans
     trans_l2_penalty=(1e-2, 1e-2, 1e-3),  # x, y, z
+    mode="SO3xR3",
 )
 
 
@@ -371,6 +374,7 @@ def _scaled_neurad_training(config: TrainerConfig, scale: float, newname: str) -
     config.steps_per_eval_image = int(config.steps_per_eval_image * scale)
     config.steps_per_eval_all_images = int(config.steps_per_eval_all_images * scale)
     config.steps_per_save = int(config.steps_per_save * scale)
+    assert isinstance(config.pipeline, ADPipelineConfig)
     config.pipeline.calc_fid_steps = tuple(int(scale * s) for s in config.pipeline.calc_fid_steps)
     for optimizer in config.optimizers.values():
         optimizer["scheduler"].max_steps = int(optimizer["scheduler"].max_steps * scale)
@@ -380,7 +384,6 @@ def _scaled_neurad_training(config: TrainerConfig, scale: float, newname: str) -
 
 # Bigger, better, longer, stronger
 method_configs["neurader"] = _scaled_neurad_training(method_configs["neurad"], 2.5, "neurader")
-method_configs["neurader"].method_name = "neurader"
 for optimizer in method_configs["neurader"].optimizers.values():
     optimizer["optimizer"].lr *= 0.5
     optimizer["scheduler"].lr_final *= 0.5
@@ -402,6 +405,9 @@ method_configs["neuradest"] = _scaled_neurad_training(method_configs["neurader"]
 method_configs["neuradest-scaleopt"] = _scaled_neurad_training(
     method_configs["neurader-scaleopt"], 3, "neuradest-scaleopt"
 )
+for optimizer in method_configs["neuradest-scaleopt"].optimizers.values():
+    optimizer["optimizer"].lr *= 0.5
+    optimizer["scheduler"].lr_final *= 0.5
 
 # Configurations matching the paper (disable temporal appearance and actor flip)
 method_configs["neurad-paper"] = deepcopy(method_configs["neurad"])

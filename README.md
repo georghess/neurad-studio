@@ -1,5 +1,3 @@
-<div align="center"><h2>NeuRAD: Neural Rendering for Autonomous Driving</h2></div>
-
 <p align="center">
     <!-- project badges -->
     <a href="https://research.zenseact.com/publications/neurad/"><img src="https://img.shields.io/badge/Project-Page-ffa"/></a>
@@ -9,16 +7,18 @@
     </a>
 </p>
 
-<p align="center"><b>CVPR 2024 highlight</b></p>
+
 <div align="center">
 <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/neurad_logo_with_text_dark.png" />
-<!-- /pypi-strip -->
     <img alt="tyro logo" src="docs/_static/imgs/neurad_logo_with_text.png" width="80%"/>
-<!-- pypi-strip -->
 </picture>
 </div>
 
+<div align="center">
+<h3 style="font-size:2.0em;">Neural Rendering for Autonomous Driving</h3>
+<h4>CVPR 2024 highlight</h4>
+</div>
 <div align="center">
 
 [Quickstart](#quickstart) ·
@@ -33,7 +33,40 @@ This is the official code release of the CVPR 2024 paper _NeuRAD: Neural Renderi
 
 In line with Nerfstudio's mission, this is a contributor-friendly repo with the goal of building a community where users can more easily build upon each other's contributions.
 
-Do you have feature requests or want to add **your** new AD-NeRF model? Or maybe provide structures for a new dataset? **We welcome [contributions](https://docs.nerf.studio/reference/contributing.html)!**
+Do you have feature requests or want to add **your** new AD-NeRF model? Or maybe provide structures for a new dataset? **We welcome contributions!**
+
+<div align="center">
+<a href="https://zenseact.com/">
+<picture style="padding-left: 10px; padding-right: 10px;">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/ZEN_Vertical_logo_white.svg" />
+    <img alt="zenseact logo" src="docs/_static/imgs/ZEN_Vertical_logo_black.svg" height="100px" />
+</picture>
+</a>
+<a href="https://www.chalmers.se/en/">
+<picture style="padding-left: 10px; padding-right: 10px; padding-bottom: 10px;">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/EN_Avancez_CH_white.png" />
+    <img alt="chalmers logo" src="docs/_static/imgs/EN_Avancez_CH_black.png" height="90px" />
+</picture>
+</a>
+<a href="https://www.lunduniversity.lu.se/">
+<picture style="padding-left: 10px; padding-right: 10px;">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/LundUniversity_C2line_NEG.png" />
+    <img alt="lund logo" src="docs/_static/imgs/LundUniversity_C2line_BLACK.png" height="100px" />
+</picture>
+</a>
+<a href="https://liu.se/en">
+<picture style="padding-left: 10px; padding-right: 10px;">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/LiU_secondary_1_white-PNG.png" />
+    <img alt="liu logo" src="docs/_static/imgs/LiU_secondary_1_black-PNG.png" height="100px" />
+</picture>
+</a>
+<a href="https://wasp-sweden.org/">
+<picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/WASP-logotype-white.png" />
+    <img alt="wasp logo" src="docs/_static/imgs/WASP_logotyp_grey_180116.png" height="80px" />
+</picture>
+</a>
+</div>
 
 # Quickstart
 
@@ -48,10 +81,10 @@ Our installation steps largely follow Nerfstudio, with some added dataset-specif
 
 ### Create environment
 
-NeuRAD requires `python >= 3.8`. We recommend using conda to manage dependencies. Make sure to install [Conda](https://docs.conda.io/miniconda.html) before proceeding.
+NeuRAD requires `python >= 3.10`. We recommend using conda to manage dependencies. Make sure to install [Conda](https://docs.conda.io/miniconda.html) before proceeding.
 
 ```bash
-conda create --name neurad -y python=3.8
+conda create --name neurad -y python=3.10
 conda activate neurad
 pip install --upgrade pip
 ```
@@ -64,18 +97,27 @@ Install PyTorch with CUDA (this repo has been tested with CUDA 11.7 and CUDA 11.
 For CUDA 11.8:
 
 ```bash
-pip install torch==2.1.2+cu118 torchvision==0.16.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
 
 conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
+
+# Some need to upgrade dill prior to tiny-cuda-nn install
+pip install dill --upgrade
+
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+```
+
+For support of Waymo-Open-Dataset v2 (requires python3.10, also dependencies from this package are very strict so cannot add it to pyproject.toml and need install first):
+```bash
+pip install waymo-open-dataset-tf-2-11-0==1.6.1
 ```
 
 We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v1.0.3/docs/quickstart/installation.md) for more installation support.
 
 ### Installing NeuRAD
 ```bash
-git clone https://github.com/georghess/neurad.git
-cd neurad
+git clone https://github.com/georghess/neurad-studio.git
+cd neurad-studio
 pip install --upgrade pip setuptools
 pip install -e .
 ```
@@ -90,7 +132,8 @@ The following will train a _NeuRAD_ model, our recommended model for real world 
 
 ### Data preparation
 
-Begin by downloading [PandaSet](https://www.kaggle.com/datasets/usharengaraju/pandaset-dataset/data) and place it under ```data/pandaset```.
+Begin by downloading [PandaSet](https://huggingface.co/datasets/georghess/pandaset) and unzip it under ```data/pandaset```.
+The dataset is no longer hosted by Scale but can be downloaded from the provided huggingface link.
 
 ### Training
 
@@ -112,6 +155,10 @@ Navigating to the link at the end of the terminal will load the webviewer. If yo
 <p align="center">
     <img width="800" alt="image" src="docs/_static/imgs/readme_viewer_neurad.png">
 </p>
+
+### Troubleshooting
+
+If you run into issues, it could be due to the training taking up too much memory. You can try to adjust the model parameters according to the neurad-tiny [vscode launch config](https://github.com/georghess/neurad-studio/blob/master/.vscode/launch.json#L51).
 
 ### Resume from checkpoint / visualize existing run
 
@@ -180,16 +227,23 @@ To add a dataset, create `nerfstudio/data/dataparsers/mydataset.py` containing o
 | Data                                                                                          | Cameras | Lidars                                                      |
 | --------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------- |
 | 🚗 [nuScenes](https://www.nuscenes.org/)          | 6 cameras            |  32-beam lidar                   |
-| 🚗 [ZOD](https://zod.zenseact.com/)           | 1 camera            | 128-beam + 2 x 16-beam lidars                   |
+| 🚗 [ZOD](https://zod.zenseact.com/) ([Annotations](https://github.com/user-attachments/files/15773566/auto_annotations.zip))          | 1 camera            | 128-beam + 2 x 16-beam lidars                   |
 | 🚗 [Argoverse 2](https://www.argoverse.org/av2.html)   | 7 ring cameras + 2 stereo cameras            | 2 x 32-beam lidars                   |
-| 🚗 [PandaSet](https://pandaset.org/)         | 6 cameras | 64-beam lidar                                  |
-| 🚗 [KITTIMOT](https://www.cvlibs.net/datasets/kitti/eval_tracking.php) | 2 stereo cameras | 64-beam lidar
+| 🚗 [PandaSet](https://pandaset.org/) ([huggingface download](https://huggingface.co/datasets/georghess/pandaset))         | 6 cameras | 64-beam lidar                                  |
+| 🚗 [KITTIMOT](https://www.cvlibs.net/datasets/kitti/eval_tracking.php) ([Timestamps](https://www.cvlibs.net/datasets/kitti/raw_data.php)) | 2 stereo cameras | 64-beam lidar
+| 🚗 [Waymo v2](https://waymo.com/open/)         | 5 cameras | 64-beam lidar   
 
-
+A brief introduction about Waymo dataparser for NeuRAD can be found in [waymo_dataparser.md](./nerfstudio/data//dataparsers/waymo_dataparser.md)
 
 ## Adding Methods
 
-Nerfstudio has made it easy to add new methods, see [here](https://docs.nerf.studio/developer_guides/new_methods.html) for details. We plan to examplify this using our UniSim reimplementation, to be released soon.
+Nerfstudio has made it easy to add new methods, see [here](https://docs.nerf.studio/developer_guides/new_methods.html) for details. We have added [our UniSim reimplementation](https://github.com/carlinds/unisim) as a plugin, which can be run as any other method using the `ns-train` command:
+```bash
+ns-train unisim pandaset-data --data data/pandaset
+```
+and follow the instructions in the terminal.
+
+See [our UniSim repo](https://github.com/carlinds/unisim) for reference on how to add a new method as a plugin.
 
 # Key features
 - Dataparser for multiple autonomous driving datasets including
@@ -205,20 +259,17 @@ Nerfstudio has made it easy to add new methods, see [here](https://docs.nerf.stu
 
 # Planned Features/TODOs
 
-- [ ] UniSim plug-in
+- [ ] 3DGS implementation supporting dynamic objects
+- [x] UniSim plug-in
 - [x] Release code
 
 # Built On
 
 <a href="https://github.com/nerfstudio-project/nerfstudio">
-<!-- pypi-strip -->
 <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/nerfstudio-project/nerfstudio/main/docs/_static/imgs/logo-dark.png" />
-<!-- /pypi-strip -->
     <img alt="tyro logo" src="https://raw.githubusercontent.com/nerfstudio-project/nerfstudio/main/docs/_static/imgs/logo.png" width="150px" />
-<!-- pypi-strip -->
 </picture>
-<!-- /pypi-strip -->
 </a>
 
 - Collaboration friendly studio for NeRFs
@@ -240,6 +291,20 @@ If you use this code or find our paper useful, please consider citing:
 
 # Contributors
 
-<a href="https://github.com/georghess/neurad/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=georghess/neurad" />
+<a href="https://github.com/georghess">
+    <img src="https://github.com/georghess.png" width="60px;" style="border-radius: 50%;"/>
 </a>
+<a href="https://github.com/carlinds">
+    <img src="https://github.com/carlinds.png" width="60px;" style="border-radius: 50%;"/>
+</a>
+<a href="https://github.com/atonderski">
+    <img src="https://github.com/atonderski.png" width="60px;" style="border-radius: 50%;"/>
+</a>
+<a href="https://github.com/wljungbergh">
+    <img src="https://github.com/wljungbergh.png" width="60px;" style="border-radius: 50%;"/>
+</a>
+<a href="https://github.com/MartinEthier">
+    <img src="https://github.com/MartinEthier.png" width="60px;" style="border-radius: 50%;"/>
+</a>
+
+\+ [nerfstudio contributors](https://github.com/nerfstudio-project/nerfstudio/graphs/contributors)

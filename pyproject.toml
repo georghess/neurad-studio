@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nerfstudio"
-version = "1.0.3"
-description = "All-in-one repository for state-of-the-art NeRFs"
+name = "neurad-studio"
+version = "0.1.0"
+description = "Neural Rendering methods that are specialized for Autonomous Driving (NeuRAD)."
 readme = "README.md"
 license = { text="Apache 2.0"}
-requires-python = ">=3.8.0"
+requires-python = ">=3.10.0"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python",
@@ -63,18 +63,15 @@ dependencies = [
     "xatlas",
     "trimesh>=3.20.2",
     "timm==0.6.7",
-    "gsplat>=0.1.9",
+    "gsplat==0.1.11",
     "pytorch-msssim",
     "pathos",
     "packaging",
     "zod>=0.1.7",
     "pandaset@git+https://github.com/scaleapi/pandaset-devkit.git#egg=pandaset&subdirectory=python",
     "av2==0.2.1",
+    "fastapi[all]==0.110",
 ]
-
-[project.urls]
-"Documentation" = "https://docs.nerf.studio"
-
 
 [project.optional-dependencies]
 
@@ -100,10 +97,6 @@ dev = [
     "diffusers==0.16.1",
     "opencv-stubs==0.0.7",
     "transformers==4.29.2",
-    "pyright==1.1.331",
-    # NOTE: Disabling projectaria-tools because it doesn't have prebuilt windows wheels
-    # Syntax comes from here: https://pip.pypa.io/en/stable/reference/requirement-specifiers/
-    "projectaria-tools>=1.3.1; sys_platform != 'win32'",
     # pin torch to <=2.1 to fix https://github.com/pytorch/pytorch/issues/118736
     "torch>=1.13.1,<2.2",
 ]
@@ -142,7 +135,7 @@ ns-dev-sync-viser-message-defs = "nerfstudio.scripts.viewer.sync_viser_message_d
 include = ["nerfstudio*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.cu", "*.json", "py.typed", "setup.bash", "setup.zsh"]
+"*" = ["*.cu", "*.json", "py.typed", "setup.bash", "setup.zsh", "*.yaml"]
 
 [tool.pytest.ini_options]
 addopts = "-n=4 --typeguard-packages=nerfstudio --disable-warnings"
@@ -161,7 +154,7 @@ reportMissingImports = "warning"
 reportMissingTypeStubs = false
 reportPrivateImportUsage = false
 
-pythonVersion = "3.8"
+pythonVersion = "3.10"
 pythonPlatform = "Linux"
 
 [tool.ruff]

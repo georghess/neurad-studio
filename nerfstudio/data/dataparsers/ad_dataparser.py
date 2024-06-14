@@ -130,7 +130,7 @@ class ADDataParser(DataParser):
 
     @property
     def actor_transform(self) -> Tensor:
-        """The transform to convert from our actor frame (x-right, y-forward, z-up) to the original actor frame."""
+        """Transform to convert from our actor frame (x-right, y-forward, z-up) to the original actor frame (3x4)."""
         return torch.eye(4)[:3, :]
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
@@ -224,7 +224,7 @@ class ADDataParser(DataParser):
             mask_filenames=None,  # TODO: handle masks
             dataparser_scale=1.0,  # no scaling
             dataparser_transform=dataparser_transform,
-            actor_transform=self.actor_transform,
+            actor_transform=self.actor_transform[:3, :].float(),
             time_offset=time_offset,
             metadata={
                 "lidars": lidars,
@@ -276,8 +276,8 @@ class ADDataParser(DataParser):
         end_time = times.max().item()
         start_time = times.min().item()
         duration = end_time - start_time
-        start_time += duration * self.config.dataset_start_fraction
         end_time = start_time + duration * self.config.dataset_end_fraction
+        start_time += duration * self.config.dataset_start_fraction
 
         cameras, img_filenames = _filter_sensordata_on_time(cameras, img_filenames, start_time, end_time)
         lidars, pc_filenames = _filter_sensordata_on_time(lidars, pc_filenames, start_time, end_time)

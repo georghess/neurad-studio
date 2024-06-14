@@ -113,7 +113,7 @@ class ClosedLoopServer:
             )
             correction_matrices = self.model.camera_optimizer(
                 torch.tensor([nearest_train_cam_idx], device=self.model.device)
-            )
+            ).to(self.model.device)
             ray_bundle.origins = ray_bundle.origins + correction_matrices[:, :3, 3]
             ray_bundle.directions = torch.einsum("ij,...j->...i", correction_matrices[0, :3, :3], ray_bundle.directions)
 
@@ -125,12 +125,11 @@ class ClosedLoopServer:
         device = self.model.device
         modified_trajectories = []
         actor_ids = []
-        actor_transform = self.actor_transform.to(device)
         for traj in new_trajectories:
             timestamps_in_seconds = traj["timestamps"].to(torch.float64) / 1e6
             modified_trajectories.append(
                 {
-                    "poses": self.world_transform @ traj["poses"].to(device) @ actor_transform,
+                    "poses": self.world_transform @ traj["poses"].to(device) @ self.actor_transform,
                     "timestamps": (timestamps_in_seconds - self.min_time).to(device),
                     "dims": traj["dims"].to(device),
                     "symmetric": True,  # TODO
@@ -159,7 +158,7 @@ class ClosedLoopServer:
         for actor_idx in range(poses.shape[1]):
             trajs.append(
                 {
-                    "poses": (world_inverse @ poses[:, actor_idx]).cpu() @ actor_transform_inv,
+                    "poses": (world_inverse @ poses[:, actor_idx] @ actor_transform_inv).cpu(),
                     "timestamps": timestamps.cpu().long(),
                     "dims": self.model.dynamic_actors.actor_sizes[actor_idx].cpu(),
                     "uuid": self.actor_uuids[actor_idx],

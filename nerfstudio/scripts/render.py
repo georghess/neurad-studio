@@ -34,6 +34,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import mediapy as media
 import numpy as np
+import plotly.graph_objs as go
 import torch
 import tyro
 import viser.transforms as tf
@@ -619,8 +620,10 @@ class RenderInterpolated(BaseRender):
     """Shift to apply to all actor poses."""
     actor_removal_time: Optional[float] = None
     """Time at which to remove all actors."""
-    actor_stop_time: Optional[float] = 3.2
+    actor_stop_time: Optional[float] = None
     """Time at which to stop all actors."""
+    actor_indices: Optional[List[int]] = None
+    """Indices of actors to modify. If None, modify all actors."""
 
     def main(self) -> None:
         """Main function."""
@@ -662,7 +665,7 @@ class RenderInterpolated(BaseRender):
             sensor_indices = torch.tensor([0]).unsqueeze(0)
             cameras.metadata["sensor_idxs"] = torch.zeros_like(cameras.camera_type, dtype=torch.int64)
 
-        modify_actors(pipeline, self.actor_shift, self.actor_removal_time, self.actor_stop_time)
+        modify_actors(pipeline, self.actor_shift, self.actor_removal_time, self.actor_stop_time, self.actor_indices)
 
         for sensor_index in sensor_indices:
             mask = (cameras.metadata["sensor_idxs"] == sensor_index).squeeze(-1)
@@ -722,19 +725,24 @@ class RenderInterpolated(BaseRender):
             )
 
 
-def modify_actors(pipeline, actor_shift, actor_removal_time, actor_stop_time):
+def modify_actors(pipeline, actor_shift, actor_removal_time, actor_stop_time, actor_indices):
     actor_shift = torch.nn.Parameter(torch.tensor(actor_shift, dtype=torch.float32, device=pipeline.model.device))
     with torch.no_grad():
-        pipeline.model.dynamic_actors.actor_positions += actor_shift
+        if actor_indices is not None:
+            indices = torch.tensor(actor_indices, device=pipeline.model.device, dtype=torch.int)
+        else:
+            indices = torch.arange(pipeline.model.dynamic_actors.actor_positions.shape[1], device=pipeline.model.device)
+
+        pipeline.model.dynamic_actors.actor_positions[:, indices, :] += actor_shift
         if actor_removal_time is not None:
             no_actor_mask = pipeline.model.dynamic_actors.unique_timestamps > actor_removal_time
-            pipeline.model.dynamic_actors.actor_present_at_time[no_actor_mask, :] = False
+            pipeline.model.dynamic_actors.actor_present_at_time[no_actor_mask, indices] = False
         if actor_stop_time is not None:
             actor_stop_idx = torch.searchsorted(pipeline.model.dynamic_actors.unique_timestamps, actor_stop_time)
-            freeze_position = pipeline.model.dynamic_actors.actor_positions[actor_stop_idx].unsqueeze(0)
-            freeze_rotation = pipeline.model.dynamic_actors.actor_rotations_6d[actor_stop_idx].unsqueeze(0)
-            pipeline.model.dynamic_actors.actor_positions[actor_stop_idx:] = freeze_position
-            pipeline.model.dynamic_actors.actor_rotations_6d[actor_stop_idx:] = freeze_rotation
+            freeze_position = pipeline.model.dynamic_actors.actor_positions[actor_stop_idx, indices].unsqueeze(0)
+            freeze_rotation = pipeline.model.dynamic_actors.actor_rotations_6d[actor_stop_idx, indices].unsqueeze(0)
+            pipeline.model.dynamic_actors.actor_positions[actor_stop_idx:, indices] = freeze_position
+            pipeline.model.dynamic_actors.actor_rotations_6d[actor_stop_idx:, indices] = freeze_rotation
 
 
 def get_shifted_camera_path(cameras, shift, shift_time, shift_steps, interpolation_steps):
@@ -882,10 +890,23 @@ class DatasetRender(BaseRender):
 
     shift: Tuple[float, float, float] = (0, 0, 0)
     """Shift to apply to the camera pose."""
+
+    actor_shift: Tuple[float, ...] = (0.0, 0.0, 0.0)
+    """Shift to apply to all actor poses."""
+    actor_removal_time: Optional[float] = None
+    """Time at which to remove all actors."""
+    actor_stop_time: Optional[float] = None
+    """Time at which to stop all actors."""
+    actor_indices: Optional[List[int]] = None
+    """Indices of actors to modify. If None, modify all actors."""
+
     calculate_and_save_metrics: bool = False
     """Whether to calculate and save metrics."""
     metrics_filename: Path = Path("metrics.pkl")
     """Filename to save the metrics to."""
+
+    render_point_clouds: bool = False
+    """Whether to render point clouds."""
 
     def main(self):
         config: TrainerConfig
@@ -921,6 +942,8 @@ class DatasetRender(BaseRender):
         data_manager_config = config.pipeline.datamanager
         assert isinstance(data_manager_config, (VanillaDataManagerConfig, FullImageDatamanagerConfig))
 
+        modify_actors(pipeline, self.actor_shift, self.actor_removal_time, self.actor_stop_time, self.actor_indices)
+
         self.output_path.mkdir(exist_ok=True, parents=True)
         metrics_out = dict()
         for split in self.pose_source.split("+"):
@@ -932,12 +955,14 @@ class DatasetRender(BaseRender):
 
                 dataset = datamanager.train_dataset
                 dataparser_outputs = getattr(dataset, "_dataparser_outputs", datamanager.train_dataparser_outputs)
+                lidar_dataset = datamanager.train_lidar_dataset
             else:
                 with _disable_datamanager_setup(data_manager_config._target):  # pylint: disable=protected-access
                     datamanager = data_manager_config.setup(test_mode=split, device=pipeline.device)
 
                 dataset = datamanager.eval_dataset
                 dataparser_outputs = getattr(dataset, "_dataparser_outputs", None)
+                lidar_dataset = datamanager.eval_lidar_dataset
                 if dataparser_outputs is None:
                     dataparser_outputs = datamanager.dataparser.get_dataparser_outputs(split=datamanager.test_split)
             dataset.cameras.height = (
@@ -961,6 +986,11 @@ class DatasetRender(BaseRender):
 
             dataloader = FixedIndicesEvalDataloader(
                 dataset=dataset,
+                device=datamanager.device,
+                num_workers=datamanager.world_size * 4,
+            )
+            lidar_dataloader = FixedIndicesEvalDataloader(
+                dataset=lidar_dataset,
                 device=datamanager.device,
                 num_workers=datamanager.world_size * 4,
             )
@@ -1106,6 +1136,39 @@ class DatasetRender(BaseRender):
                         else:
                             raise ValueError(f"Unknown image format {self.image_format}")
 
+            if self.render_point_clouds:
+                with Progress(
+                    TextColumn(f":movie_camera: Rendering lidars for split {split} :movie_camera:"),
+                    BarColumn(),
+                    TaskProgressColumn(
+                        text_format="[progress.percentage]{task.completed}/{task.total:>.0f}({task.percentage:>3.1f}%)",
+                        show_speed=True,
+                    ),
+                    ItersPerSecColumn(suffix="fps"),
+                    TimeRemainingColumn(elapsed_when_finished=False, compact=False),
+                    TimeElapsedColumn(),
+                ) as progress:
+                    with torch.no_grad():
+                        output_path = self.output_path / split / "lidar"
+                        output_path.mkdir(exist_ok=True, parents=True)
+                        for lidar_idx, (lidar, batch) in enumerate(
+                            progress.track(lidar_dataloader, total=len(lidar_dataloader))
+                        ):
+                            lidar_output, _ = pipeline.model.get_outputs_for_lidar(lidar, batch=batch)
+                            points_in_local = lidar_output["points"]
+                            if "ray_drop_prob" in lidar_output:
+                                points_in_local = points_in_local[(lidar_output["ray_drop_prob"] < 0.5).squeeze(-1)]
+
+                            points_in_world = to_world(lidar.lidar_to_worlds[0], points_in_local)
+                            # get ground truth for comparison
+                            gt_point_in_world = to_world(lidar.lidar_to_worlds[0], batch["lidar"][..., :3])
+                            plot_lidar_points(
+                                gt_point_in_world.cpu().detach().numpy(), output_path / f"gt-lidar_{lidar_idx}.png"
+                            )
+                            plot_lidar_points(
+                                points_in_world.cpu().detach().numpy(), output_path / f"lidar_{lidar_idx}.png"
+                            )
+
         if self.calculate_and_save_metrics:
             metrics_out_path = Path(self.output_path, self.metrics_filename)
             with open(metrics_out_path, "wb") as f:
@@ -1121,6 +1184,89 @@ class DatasetRender(BaseRender):
         for split in self.pose_source.split("+"):
             table.add_row(f"Outputs {split}", str(self.output_path / split))
         CONSOLE.print(Panel(table, title="[bold][green]:tada: Render on split {} Complete :tada:[/bold]", expand=False))
+
+
+def to_world(l2w, points):
+    points_in_world = (
+        l2w
+        @ torch.cat(
+            [
+                points,
+                torch.ones_like(points[..., :1]),
+            ],
+            dim=-1,
+        ).unsqueeze(-1)
+    ).squeeze()
+    return points_in_world
+
+
+def plot_lidar_points(points, output_path, cmin=-6.0, cmax=5.0, width=1920, height=1080, ranges=[100, 200, 10]):
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+
+    # Create a 3D scatter plot
+    trace = go.Scatter3d(
+        x=x,
+        y=y,
+        z=z,
+        mode="markers",
+        marker=dict(
+            size=1.0,
+            color=z,
+            colorscale="Viridis",
+            opacity=0.8,
+            cmin=cmin,
+            cmax=cmax,
+        ),
+    )
+
+    x_range, y_range, z_range = ranges
+
+    # Compute the aspect ratio
+    max_range = 2 * max(x_range, y_range, z_range)
+    aspect_ratio = dict(x=x_range / max_range, y=y_range / max_range, z=z_range / max_range)
+
+    # Define the camera position
+    camera = dict(
+        up=dict(x=0, y=0, z=1),
+        center=dict(x=0, y=0, z=0),
+        eye=dict(x=0.0, y=-0.07, z=0.02),
+    )
+    layout = go.Layout(
+        scene=dict(
+            xaxis=dict(
+                title="",
+                range=[-x_range, x_range],
+                showticklabels=False,
+                ticks="",
+                showline=False,
+                showgrid=False,
+            ),
+            yaxis=dict(
+                title="",
+                range=[-y_range, y_range],
+                showticklabels=False,
+                ticks="",
+                showline=False,
+                showgrid=False,
+            ),
+            zaxis=dict(
+                title="",
+                range=[-z_range, z_range],
+                showticklabels=False,
+                ticks="",
+                showline=False,
+                showgrid=False,
+            ),
+            aspectmode="manual",
+            aspectratio=aspect_ratio,
+            camera=camera,
+        )
+    )
+
+    fig = go.Figure(data=[trace], layout=layout)
+    fig.write_image(output_path, width=width, height=height, scale=1)
 
 
 def streamline_ad_config(config):

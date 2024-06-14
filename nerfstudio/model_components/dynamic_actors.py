@@ -52,6 +52,7 @@ class DynamicActors(nn.Module):
             "lateral": 0.0,
             "longitudinal": 0.0,
             "rotation": 0.0,
+            "index": -1.0,
         }
         self.actor_lateral_shift = ViewerSlider(
             name="Actor lateral shift (m)",
@@ -78,6 +79,15 @@ class DynamicActors(nn.Module):
             max_value=3.14,
             step=0.1,
             cb_hook=lambda obj: self.actor_editing.update({"rotation": obj.value}),
+        )
+
+        self.actor_index_to_edit = ViewerSlider(
+            name="Actor index to edit",
+            default_value=self.actor_editing["index"],
+            min_value=-1.0,
+            max_value=len(trajectories),
+            step=1.0,
+            cb_hook=lambda obj: self.actor_editing.update({"index": obj.value}),
         )
 
     def actor_bounds(self):
@@ -145,8 +155,13 @@ class DynamicActors(nn.Module):
 
     def edit_boxes2world(self, boxes2world: Tensor):
         with torch.no_grad():
+            if self.actor_editing["index"] == -1.0:
+                indices = torch.arange(self.n_actors, device=boxes2world.device)
+            else:
+                indices = torch.tensor([self.actor_editing["index"]], device=boxes2world.device, dtype=torch.int)
+
             if abs(self.actor_editing["longitudinal"]) > 0.0 or abs(self.actor_editing["lateral"]) > 0.0:
-                boxes2world[..., 3] = boxes2world @ torch.tensor(
+                boxes2world[:, indices, :, 3] = boxes2world[:, indices] @ torch.tensor(
                     [self.actor_editing["lateral"], self.actor_editing["longitudinal"], 0.0, 1.0],
                     device=boxes2world.device,
                 )
@@ -160,7 +175,7 @@ class DynamicActors(nn.Module):
                     ],
                     device=boxes2world.device,
                 )
-                boxes2world[..., :3, :3] = rotation_yaw @ boxes2world[..., :3, :3]
+                boxes2world[:, indices, :3, :3] = rotation_yaw @ boxes2world[:, indices, :3, :3]
         return boxes2world
 
     def get_boxes2world(self, query_times: Tensor, flatten: bool = True):

@@ -101,6 +101,7 @@ RUN git clone --branch 3.8 https://github.com/colmap/colmap.git --single-branch 
 
 # Upgrade pip and install packages.
 RUN python3.10 -m pip install --no-cache-dir --upgrade pip setuptools pathtools promise pybind11
+SHELL ["/bin/bash", "-c"]
 # Install pytorch and submodules
 RUN CUDA_VER=${CUDA_VERSION%.*} && CUDA_VER=${CUDA_VER//./} && python3.10 -m pip install --no-cache-dir \
     torch==2.0.1+cu${CUDA_VER} \
@@ -137,12 +138,17 @@ RUN git clone --recursive https://github.com/cvg/pixel-perfect-sfm.git && \
     python3.10 -m pip install --no-cache-dir -e . && \
     cd ..
 
-RUN python3.10 -m pip install --no-cache-dir omegaconf
-# Copy nerfstudio folder and give ownership to user.
+# Install waymo-open-dataset
+RUN python3.10 -m pip install --no-cache-dir waymo-open-dataset-tf-2-11-0==1.6.1
+
+# Copy nerfstudio folder.
 ADD . /nerfstudio
 
 # Install nerfstudio dependencies.
 RUN cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .
+
+# Make sure viser client is built
+RUN python -c "import viser; viser.ViserServer()"
 
 # Change working directory
 WORKDIR /workspace

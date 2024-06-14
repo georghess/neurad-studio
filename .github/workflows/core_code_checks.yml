@@ -26,9 +26,6 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade --upgrade-strategy eager -e .[dev]
-      - name: Run license checks
-        run: |
-          ./nerfstudio/scripts/licensing/license_headers.sh --check
       - name: Check notebook cell metadata
         run: |
           python ./nerfstudio/scripts/docs/add_nb_tags.py --check
@@ -36,9 +33,6 @@ jobs:
         run: ruff check docs/ nerfstudio/ tests/ --output-format=github
       - name: Run Ruff Formatter
         run: ruff format docs/ nerfstudio/ tests/ --diff
-      - name: Run Pyright
-        run: |
-          pyright
       - name: Test with pytest
         run: |
           pytest

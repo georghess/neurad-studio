@@ -14,7 +14,6 @@
 
 """Dataparser for the argoverse2 dataset."""
 
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Literal, Tuple, Type
@@ -143,7 +142,7 @@ class Argoverse2DataParserConfig(ADDataParserConfig):
     """target class to instantiate"""
     sequence: str = "2b044433-ddc1-3580-b560-d46474934089"
     """name of the sequence to use"""
-    data: Path = Path("data/argoverse2")
+    data: Path = Path("data/av2")
     """path to the dataset"""
     cameras: Tuple[
         Literal[
@@ -187,9 +186,9 @@ class Argoverse2(ADDataParser):
     @property
     def actor_transform(self) -> torch.Tensor:
         """Argo uses x-forward, so we need to rotate to x-right."""
-        wlh_to_lwh = np.eye(4)
+        wlh_to_lwh = np.eye(4, dtype=np.float32)
         wlh_to_lwh[:3, :3] = WLH_TO_LWH
-        return torch.from_numpy(wlh_to_lwh)
+        return torch.from_numpy(wlh_to_lwh)[:3, :]
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
         """Returns camera info and image filenames."""
@@ -346,14 +345,13 @@ class Argoverse2(ADDataParser):
 
         missing_points = []
 
+        assert lidars.times is not None  # typehints
+        assert lidars.metadata is not None  # typehints
+        down2up = lidars.metadata["down2up"].view(len(lidars.times), 3, 4)[0]
         if self.config.add_missing_points:
-            assert lidars.metadata is not None  # typehints
-            assert lidars.times is not None  # typehints
-            down2up = lidars.metadata["down2up"].view(len(lidars.times), 3, 4)[0]
             poses_down = lidars.metadata["poses_down"].view(len(lidars.times), 4, 4)
             poses_up = lidars.lidar_to_worlds
             times = lidars.times
-
             log_pose_df = io_utils.read_feather(
                 self.av2._data_dir / self.config.sequence / "city_SE3_egovehicle.feather"
             )
