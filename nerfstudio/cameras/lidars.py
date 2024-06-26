@@ -22,7 +22,6 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import torch
-#import torch._dynamo
 from jaxtyping import Float, Int
 from matplotlib import pyplot as plt
 from torch import Tensor
@@ -36,7 +35,6 @@ from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.utils.misc import strtobool, torch_compile
 from nerfstudio.utils.tensor_dataclass import TensorDataclass
 
-#torch._dynamo.config.suppress_errors = True
 TORCH_DEVICE = Union[torch.device, str]  # pylint: disable=invalid-name
 
 HORIZONTAL_BEAM_DIVERGENCE = 3.0e-3  # radians, or meters at a distance of 1m
