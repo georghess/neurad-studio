@@ -145,7 +145,6 @@ class TrainerConfig(ExperimentConfig):
     gradient_accumulation_steps: Dict[str, int] = field(default_factory=lambda: {})
     """Number of steps to accumulate gradients over. Contains a mapping of {param_group:num}"""
 
-
 class Trainer:
     """Trainer class
 

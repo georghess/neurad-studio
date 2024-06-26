@@ -26,6 +26,7 @@ from nerfstudio.data.dataparsers.base_dataparser import DataParserConfig
 from nerfstudio.data.dataparsers.kittimot_dataparser import KittiMotDataParserConfig
 from nerfstudio.data.dataparsers.nuscenes_dataparser import NuScenesDataParserConfig
 from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
+from nerfstudio.data.dataparsers.wod_dataparser import WoDParserConfig
 from nerfstudio.data.dataparsers.zod_dataparser import ZodDataParserConfig
 from nerfstudio.plugins.registry_dataparser import discover_dataparsers
 
@@ -35,6 +36,7 @@ dataparsers = {
     "argoverse2-data": Argoverse2DataParserConfig(),
     "zod-data": ZodDataParserConfig(),
     "pandaset-data": PandaSetDataParserConfig(),
+    "wod-data": WoDParserConfig(),
 }
 
 external_dataparsers, _ = discover_dataparsers()
