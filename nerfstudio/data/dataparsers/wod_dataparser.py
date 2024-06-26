@@ -13,14 +13,8 @@ from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.cameras.lidars import Lidars, LidarType
 from nerfstudio.data.dataparsers.ad_dataparser import DUMMY_DISTANCE_VALUE, ADDataParser, ADDataParserConfig
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
-from nerfstudio.data.dataparsers.wod_utils import (
-    WOD64_ELEVATION_MAPPING,
-    ExportImages,
-    ExportLidar,
-    ObjectsID,
-    ParquetReader,
-    SelectedTimestamp,
-)
+from nerfstudio.data.dataparsers.wod_utils import ExportImages, ExportLidar, ObjectsID, ParquetReader, SelectedTimestamp
+from nerfstudio.data.utils.lidar_elevation_mappings import WOD64_ELEVATION_MAPPING
 
 WOD_ELEVATION_MAPPING = {"Wod64": WOD64_ELEVATION_MAPPING}
 WOD_AZIMUT_RESOLUTION = {"Wod64": 0.140625}
@@ -107,7 +101,7 @@ class WoD(ADDataParser):
 
         output_folder_name = f"{self.config.sequence}_start{self.config.start_frame}_end{self.config.end_frame}"
         output_folder_name += "_cameras_" + "_".join([str(id) for id in self.cameras_ids])
-        images_output_folder:Path = self.config.output_folder / output_folder_name # type: ignore
+        images_output_folder: Path = Path(self.config.output_folder) / output_folder_name  # type: ignore
 
         export_images = ExportImages(
             self.parquet_reader,
