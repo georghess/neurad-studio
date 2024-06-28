@@ -122,6 +122,11 @@ pip install --upgrade pip setuptools
 pip install -e .
 ```
 
+Since it has conficts with `torchmetrics` installation in `pyproject.toml`, it is recommened to install it after neurad building above:
+```bash
+pip install torchmetrics
+```
+
 **OR** if you want to skip all installation steps and directly start using NeuRAD, use the provided docker image or apptainer recipe:
 
 [Dockerfile](Dockerfile) or [Apptainer recipe](apptainer_recipe).
