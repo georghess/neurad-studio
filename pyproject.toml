@@ -55,7 +55,8 @@ dependencies = [
     "tensorboard>=2.13.0",
     "torch>=1.13.1",
     "torchvision>=0.14.1",
-    "torchmetrics[image]>=1.0.1",
+    # Added to README for later installation
+    # "torchmetrics[image]>=1.0.1",
     "typing_extensions>=4.4.0",
     "viser@git+https://github.com/atonderski/viser.git",
     "nuscenes-devkit>=1.1.1",
