@@ -329,9 +329,9 @@ class NeuRADModel(ADModel):
         if rgb is not None:
             nff_outputs["rgb"] = rgb
         if intensity is not None:
-            nff_outputs["intensity"] = intensity
+            nff_outputs["intensity"] = intensity.float()
         if ray_drop_logits is not None:
-            nff_outputs["ray_drop_logits"] = ray_drop_logits
+            nff_outputs["ray_drop_logits"] = ray_drop_logits.float()
         return nff_outputs
 
     def decode_features(
