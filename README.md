@@ -114,7 +114,7 @@ We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
-pip install --upgrade pip setuptools
+pip install --upgrade pip "setuptools<70.0"
 pip install -e .
 ```
 
