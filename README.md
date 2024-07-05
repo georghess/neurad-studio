@@ -23,13 +23,14 @@
 
 [Quickstart](#quickstart) ·
 [Learn more](#learn-more) ·
-[Planned Features](#planned-featurestodos)
+[Planned Features](#planned-featurestodos) ·
+[Project page](https://research.zenseact.com/publications/neurad/)
 
 </div>
 
 # About
 
-This is the official code release of the CVPR 2024 paper _NeuRAD: Neural Rendering for Autonomous Driving_, building on top of [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio). Besides releasing the code for our NeuRAD model, we hope that this can lay the ground-work for research on applying neural rendering methods in autonomous driving.
+This is the official code release of the CVPR 2024 [paper](https://arxiv.org/abs/2311.15260) _NeuRAD: Neural Rendering for Autonomous Driving_, building on top of [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio). Besides releasing the code for our NeuRAD model, we hope that this can lay the ground-work for research on applying neural rendering methods in autonomous driving.
 
 In line with Nerfstudio's mission, this is a contributor-friendly repo with the goal of building a community where users can more easily build upon each other's contributions.
 
@@ -113,7 +114,7 @@ We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
-pip install --upgrade pip setuptools
+pip install --upgrade pip "setuptools<70.0"
 pip install -e .
 ```
 
