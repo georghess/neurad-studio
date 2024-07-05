@@ -104,7 +104,7 @@ conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 # Some need to upgrade dill prior to tiny-cuda-nn install
 pip install dill --upgrade
 
-pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/v1.6#subdirectory=bindings/torch
+pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
 
 For support of Waymo-Open-Dataset v2 (requires python3.10, also dependencies from this package are very strict so cannot add it to pyproject.toml and need install first):
@@ -118,7 +118,7 @@ We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
-pip install --upgrade pip setuptools
+pip install --upgrade pip "setuptools<70.0"
 pip install -e .
 ```
 
