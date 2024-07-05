@@ -100,7 +100,7 @@ RUN git clone --branch 3.8 https://github.com/colmap/colmap.git --single-branch 
     rm -rf colmap
 
 # Upgrade pip and install packages.
-RUN python3.10 -m pip install --no-cache-dir --upgrade pip setuptools pathtools promise pybind11
+RUN python3.10 -m pip install --no-cache-dir --upgrade pip "setuptools<70.0" pathtools promise pybind11
 SHELL ["/bin/bash", "-c"]
 # Install pytorch and submodules
 RUN CUDA_VER=${CUDA_VERSION%.*} && CUDA_VER=${CUDA_VER//./} && python3.10 -m pip install --no-cache-dir \

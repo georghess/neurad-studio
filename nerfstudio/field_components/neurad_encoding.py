@@ -180,6 +180,7 @@ class NeuRADHashEncoding(nn.Module):
 
         actor_hashgrid_idx = self.actors.actor_to_id[actor_idx]
         actor_features = self._get_actor_features(actor_positions, actor_hashgrid_idx)
+        actor_features = actor_features.to(static_features.dtype)
         padded_actor_features = F.pad(actor_features, (0, self.scene_repr_dim - actor_features.shape[-1]))
         features[ray_idx, sample_idx] = padded_actor_features
 
