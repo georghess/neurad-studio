@@ -104,7 +104,7 @@ conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 # Some need to upgrade dill prior to tiny-cuda-nn install
 pip install dill --upgrade
 
-pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/v1.6#subdirectory=bindings/torch
 ```
 
 For support of Waymo-Open-Dataset v2 (requires python3.10, also dependencies from this package are very strict so cannot add it to pyproject.toml and need install first):
@@ -120,11 +120,6 @@ git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
 pip install --upgrade pip setuptools
 pip install -e .
-```
-
-Since it has conficts with `torchmetrics` installation in `pyproject.toml`, it is recommened to install it after neurad building above:
-```bash
-pip install torchmetrics
 ```
 
 **OR** if you want to skip all installation steps and directly start using NeuRAD, use the provided docker image or apptainer recipe:

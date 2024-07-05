@@ -14,6 +14,7 @@ classifiers = [
     "Programming Language :: Python",
 ]
 dependencies = [
+    "numpy<2.0",
     "appdirs>=1.4",
     "av>=9.2.0",
     "awscli>=1.31.10",
