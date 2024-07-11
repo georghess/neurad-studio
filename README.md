@@ -104,6 +104,7 @@ conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
 
 # Some need to upgrade dill prior to tiny-cuda-nn install
 pip install dill --upgrade
+pip install --upgrade pip "setuptools<70.0"
 
 pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 ```
@@ -114,7 +115,6 @@ We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
-pip install --upgrade pip "setuptools<70.0"
 pip install -e .
 ```
 
