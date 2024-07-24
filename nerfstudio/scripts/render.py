@@ -1187,7 +1187,6 @@ class DatasetRender(BaseRender):
         CONSOLE.print(Panel(table, title="[bold][green]:tada: Render on split {} Complete :tada:[/bold]", expand=False))
 
 
-
 def plot_lidar_points(points, output_path, cmin=-6.0, cmax=5.0, width=1920, height=1080, ranges=[100, 200, 10]):
     x = points[:, 0]
     y = points[:, 1]
