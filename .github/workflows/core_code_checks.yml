@@ -26,6 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade --upgrade-strategy eager -e .[dev]
+          pip install waymo-open-dataset-tf-2-11-0==1.6.1
       - name: Check notebook cell metadata
         run: |
           python ./nerfstudio/scripts/docs/add_nb_tags.py --check
