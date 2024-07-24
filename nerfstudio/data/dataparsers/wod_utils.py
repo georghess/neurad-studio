@@ -1,65 +1,80 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 from __future__ import annotations
 
-import warnings
-from copy import deepcopy
-from typing import Optional
-
-# Disable annoying warnings from PyArrow using under the hood.
-warnings.simplefilter(action="ignore", category=FutureWarning)
 import glob
 import os
-from dataclasses import asdict, dataclass
-from typing import Dict, List, Literal, Tuple, Type, TypedDict
+import warnings
+from copy import deepcopy
+from dataclasses import asdict
+from typing import Dict, List, Optional, Tuple, TypedDict
 
 import dask.dataframe as dd
 import numpy as np
 import numpy.typing as npt
 import tensorflow as tf
-tf.config.set_visible_devices([], 'GPU') # Not useful for parsing data. 
 import transforms3d
 from tqdm import tqdm
-from typing_extensions import NotRequired
 from waymo_open_dataset import v2
 from waymo_open_dataset.utils import box_utils, transform_utils
-from waymo_open_dataset.v2.perception import box as _v2_box
-from waymo_open_dataset.v2.perception import camera_image as _v2_camera_image
-from waymo_open_dataset.v2.perception import context as _v2_context
-from waymo_open_dataset.v2.perception import lidar as _v2_lidar
-from waymo_open_dataset.v2.perception import pose as _v2_pose
+from waymo_open_dataset.v2.perception import (
+    box as _v2_box,
+    camera_image as _v2_camera_image,
+    context as _v2_context,
+    lidar as _v2_lidar,
+    pose as _v2_pose,
+)
 from waymo_open_dataset.v2.perception.utils.lidar_utils import convert_range_image_to_cartesian
-from waymo_open_dataset.wdl_limited.camera.ops import py_camera_model_ops
 
+tf.config.set_visible_devices([], "GPU")  # Not useful for parsing data.
+
+# Disable annoying warnings from PyArrow using under the hood.
+warnings.simplefilter(action="ignore", category=FutureWarning)
 
 DATA_FREQUENCY = 10.0  # 10 Hz
 DUMMY_DISTANCE_VALUE = 2e3  # meters, used for missing points
 TIME_OFFSET = 50e-3  # => 50ms ,time offset in sec; half scanning period
 
+
 class ActorsDict(TypedDict):
     poses: List[np.ndarray]
-    timestamps: List[float] 
+    timestamps: List[float]
     label: str
 
+
 class ImageFrame(TypedDict):
-    file_path:str
-    transform_matrix:List[List[float]]
-    frame_id:int
-    time:float
-    sensor_id:int
-    f_u:float
-    f_v:float
-    c_u:float
-    c_v:float
-    k1:float
-    k2:float
-    p1:float
-    p2:float
-    k3:float
-    h:int
-    w:int
+    file_path: str
+    transform_matrix: List[List[float]]
+    frame_id: int
+    time: float
+    sensor_id: int
+    f_u: float
+    f_v: float
+    c_u: float
+    c_v: float
+    k1: float
+    k2: float
+    p1: float
+    p2: float
+    k3: float
+    h: int
+    w: int
 
 
 def get_camera_names():
     return [f"{e.value}:{e.name}" for e in _v2_camera_image.CameraName if e.name != "UNKNOWN"]
+
 
 def get_mock_timestamps(points: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
     """Get mock relative timestamps for the wod points."""
@@ -73,6 +88,7 @@ def get_mock_timestamps(points: npt.NDArray[np.float32]) -> npt.NDArray[np.float
     # get the pseudo timestamps based on the total rotation time
     timestamps = fraction_of_rotation * 1.0 / DATA_FREQUENCY
     return timestamps
+
 
 class ParquetReader:
     def __init__(self, context_name: str, dataset_dir: str = "/data/dataset/wod/training", nb_partitions: int = 120):
@@ -116,7 +132,7 @@ class SelectedTimestamp:
 
 
 class ObjectsID:
-    ''' Helper extraction object static/dynamic IDs to be processed by ExportLidar class.'''
+    """Helper extraction object static/dynamic IDs to be processed by ExportLidar class."""
 
     def __init__(self, reader: ParquetReader, selected_ts: SelectedTimestamp, speed_static_threshold: float = 0.2):
         self.reader = reader
@@ -216,16 +232,16 @@ class ObjectsID:
 
 
 class ExportImages:
-    '''
+    """
     Used to create folder and save image in images, and returns a tuple with:
      - a list of images dict with (image path, frame_id, time, pose (nerf), sensor_id, intrinsic))
      - a tuple of rolling shutter information (duration and direction)
 
     :param reader: ParquetReader object
-    :param select_ts: SelectedTimestamp object 
+    :param select_ts: SelectedTimestamp object
     :param output_folder: Root folder images where will be saved.
     :param cameras_ids: Select which cameras_ids to export, defaults to list(range(1, len(get_camera_names()) + 1))
-    '''
+    """
 
     IMAGE_FOLDER = "images"
 
@@ -244,10 +260,10 @@ class ExportImages:
         if not os.path.exists(self.output_folder):
             os.makedirs(self.output_folder)
 
-    def process(self) -> Tuple[dict[str,List[ImageFrame]], Tuple[float, int]]:
+    def process(self) -> Tuple[dict[str, List[ImageFrame]], Tuple[float, int]]:
         cam_calib = self.reader("camera_calibration")
         camera_calib = {}
-        data_out:dict[str,List[ImageFrame]] = {}
+        data_out: dict[str, List[ImageFrame]] = {}
 
         data_out["frames"] = []
         for i, (_, r) in enumerate(cam_calib.iterrows()):
@@ -292,8 +308,8 @@ class ExportImages:
             r_image = tr_image[:3, :3]
 
             r_updated = (
-                np.eye(3) + delta_time * skm
-            ) @ r_image  # probably another way to do it : R_derivative = skm@r_image; r_image + delta_time * R_derivative
+                (np.eye(3) + delta_time * skm) @ r_image
+            )  # probably another way to do it : R_derivative = skm@r_image; r_image + delta_time * R_derivative
             t_updated = tr_image[:3, 3] + delta_time * np.array(
                 [
                     CamComp.velocity.linear_velocity.x,
@@ -324,7 +340,7 @@ class ExportImages:
                 }
                 | camera_calib[
                     "cam" + v2.perception.camera_image.CameraName(CamComp.key.camera_name).name + "_intrinsics"  # type: ignore
-                ]                   
+                ]
             )
 
             save_file = os.path.join(self.output_folder, filename)
@@ -338,8 +354,8 @@ class ExportImages:
 
 
 class ExportLidar:
-    ''' Utility class for extracting lidar point-cloud and objects from parquet files of WoD v2 dataset.'''   
-    
+    """Utility class for extracting lidar point-cloud and objects from parquet files of WoD v2 dataset."""
+
     def __init__(
         self,
         reader: ParquetReader,
@@ -382,8 +398,8 @@ class ExportLidar:
             A 3 [N, D] tensor of 3D LiDAR points. D will be 3 if keep_polar_features is
             False (x, y, z) and 6 if keep_polar_features is True (range, intensity,
             elongation, x, y, z).
-                1. Lidar points-cloud 
-                2. Missing points points-cloud 
+                1. Lidar points-cloud
+                2. Missing points points-cloud
                 3. Range image mask above dummy distance.
 
         """
@@ -426,8 +442,8 @@ class ExportLidar:
         range_image_mask = DUMMY_DISTANCE_VALUE / 2 > range_image_tensor[..., 0]  # 0  # type: ignore
         points_tensor = tf.gather_nd(range_image_cartesian, tf.compat.v1.where(range_image_mask))
         missing_points_tensor = tf.gather_nd(range_image_cartesian, tf.compat.v1.where(~range_image_mask))
-        
-        return points_tensor, missing_points_tensor, range_image_mask 
+
+        return points_tensor, missing_points_tensor, range_image_mask
 
     def is_within_box_3d(self, point, box, name=None):
         """Checks whether a point is in a 3d box given a set of points and boxes.
@@ -473,7 +489,7 @@ class ExportLidar:
             return point_in_box, point_in_box_frame[point_in_box]
 
     def _load_camera_calibration(self):
-        ''' Loads camera calibration from parquet file to dictionnary. '''
+        """Loads camera calibration from parquet file to dictionnary."""
         cam_calib_df = self.reader("camera_calibration").compute()
         self.cameras_calibration = {}
         for i, (_, r) in enumerate(cam_calib_df.iterrows()):
@@ -481,19 +497,19 @@ class ExportLidar:
             self.cameras_calibration[calib.key.camera_name] = calib
 
     def process(
-        self,
-        objects_id_to_extract: List[int] = []
-    ) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List[float], Dict[int,ActorsDict]]:
-        
+        self, objects_id_to_extract: List[int] = []
+    ) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List[float], Dict[int, ActorsDict]]:
         print("Lidar processing...")
-        objects_uuid_to_extract = [self.objects_id.id2uuid[object_id_to_extract] for object_id_to_extract in objects_id_to_extract]
+        objects_uuid_to_extract = [
+            self.objects_id.id2uuid[object_id_to_extract] for object_id_to_extract in objects_id_to_extract
+        ]
 
         self._load_camera_calibration()
         lidar_calib = self.reader("lidar_calibration").compute()
 
         lidar_df = self.reader("lidar").compute()
         lidar_df = lidar_df[
-            (lidar_df["key.laser_name"] == _v2_lidar.LaserName.TOP.value) # Only lidar TOP is used
+            (lidar_df["key.laser_name"] == _v2_lidar.LaserName.TOP.value)  # Only lidar TOP is used
             & (lidar_df["key.frame_timestamp_micros"].isin(self.select_ts.get_selected_ts()))
         ]
 
@@ -513,7 +529,7 @@ class ExportLidar:
         times = []
 
         # Neurad actor trajectories
-        actors:Dict[int,ActorsDict] = {}
+        actors: Dict[int, ActorsDict] = {}
 
         for i, (_, r) in tqdm(enumerate(lidar_df.iterrows())):
             LidarComp = v2.LiDARComponent.from_dict(r)
@@ -528,7 +544,7 @@ class ExportLidar:
                 vehicle_pose_df["key.frame_timestamp_micros"] == LidarComp.key.frame_timestamp_micros
             ]
             VehiclePoseCom = v2.VehiclePoseComponent.from_dict(vehicle_pose_df_.iloc[0])
-            
+
             lidar_box_df_ = lidar_box_df[
                 (lidar_box_df["key.frame_timestamp_micros"] == LidarComp.key.frame_timestamp_micros)
                 & (lidar_box_df["key.laser_object_id"].isin(self.objects_id.dynamic_uuid))
@@ -567,9 +583,10 @@ class ExportLidar:
 
             pts_lidar_world = (v2w @ pts_lidar_in_vehicle.T).T[:, :3]
 
-            lidar_box_df_selected_boxes = lidar_box_df_[lidar_box_df_['key.laser_object_id'].isin(objects_uuid_to_extract)]
+            lidar_box_df_selected_boxes = lidar_box_df_[
+                lidar_box_df_["key.laser_object_id"].isin(objects_uuid_to_extract)
+            ]
             for _, lidar_box in lidar_box_df_selected_boxes.iterrows():
-
                 v1_box = tf.transpose(
                     tf.constant(
                         [
@@ -584,15 +601,21 @@ class ExportLidar:
                         dtype=tf.float32,
                     )
                 )
-                v1_box = tf.reshape(v1_box,(1,-1))
+                v1_box = tf.reshape(v1_box, (1, -1))
                 v1_box_world = box_utils.transform_box(
-                    v1_box, VehiclePoseCom.world_from_vehicle.transform.reshape((4, 4)).astype("float32"), tf.eye(4)  # type: ignore
+                    v1_box,
+                    VehiclePoseCom.world_from_vehicle.transform.reshape((4, 4)).astype("float32"),
+                    tf.eye(4),  # type: ignore
                 )
                 mask_object = box_utils.is_within_box_3d(pts_lidar_world[:, :3], v1_box_world).numpy()  # type: ignore
                 mask_object = np.any(mask_object, axis=1)
 
-                mean_ts_from_lidar_pts = timestamps[mask_object].mean() #timestamp of actor is taken from mean of lidar points inside the bbox
-                object_timestamp = time + mean_ts_from_lidar_pts if np.any(mask_object) else time #If no lidar points in box, timestamp of frame
+                mean_ts_from_lidar_pts = timestamps[
+                    mask_object
+                ].mean()  # timestamp of actor is taken from mean of lidar points inside the bbox
+                object_timestamp = (
+                    time + mean_ts_from_lidar_pts if np.any(mask_object) else time
+                )  # If no lidar points in box, timestamp of frame
 
                 # actor pose
                 # actor ids

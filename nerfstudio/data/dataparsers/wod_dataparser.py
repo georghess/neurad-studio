@@ -1,3 +1,16 @@
+# Copyright 2024 the authors of NeuRAD and contributors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 """Data parser for Waymo Open Dataset"""
 
 from dataclasses import dataclass, field
@@ -34,6 +47,7 @@ ALLOWED_RIGID_CLASSES = (
 )
 WOD_CAMERA_NAME_2_ID = {e.name: e.value for e in camera_image.CameraName if e.name != "UNKNOWN"}
 
+
 @dataclass
 class WoDParserConfig(ADDataParserConfig):
     """Waymo Open Dataset config."""
@@ -52,7 +66,7 @@ class WoDParserConfig(ADDataParserConfig):
     """The percent of images to use for training. The remaining images are for eval."""
     start_frame: int = 0
     """Start frame"""
-    end_frame: Optional[int] = None 
+    end_frame: Optional[int] = None
     """End frame. When set to known end frame will be the last one."""
     dataset_end_fraction: float = 1.0
     """At what fraction of the dataset to end. Different value than 1.0 not supported with current implementation of wod dataset."""
@@ -68,7 +82,7 @@ class WoDParserConfig(ADDataParserConfig):
     """Which lidars to use, only lidar TOP is supported."""
     load_cuboids: bool = True
     """Whether to load cuboid annotations."""
-    cuboids_ids: Optional[Tuple[int,...]] = None
+    cuboids_ids: Optional[Tuple[int, ...]] = None
     """Selection of cuboids_ids if cuboid_annotations is set to True. If None, all dynamic cuboids will be exported."""
     annotation_interval: float = 0.1  # 10 Hz of capture
     """Interval between annotations in seconds."""
@@ -97,7 +111,7 @@ class WoD(ADDataParser):
     config: WoDParserConfig
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
-        ''' Images are exported from parquet files to jpg in the dataset folder, and filepaths are returns with Cameras.'''
+        """Images are exported from parquet files to jpg in the dataset folder, and filepaths are returns with Cameras."""
 
         output_folder_name = f"{self.config.sequence}_start{self.config.start_frame}_end{self.config.end_frame}"
         output_folder_name += "_cameras_" + "_".join([str(id) for id in self.cameras_ids])
@@ -105,9 +119,9 @@ class WoD(ADDataParser):
 
         export_images = ExportImages(
             self.parquet_reader,
-            output_folder = str(images_output_folder), 
-            select_ts = self.select_ts,
-            cameras_ids = self.cameras_ids,
+            output_folder=str(images_output_folder),
+            select_ts=self.select_ts,
+            cameras_ids=self.cameras_ids,
         )
 
         data_out, (rolling_shutter, rolling_shutter_direction) = export_images.process()
@@ -128,8 +142,8 @@ class WoD(ADDataParser):
         heights = []
         widths = []
         times = []
-        for frame in data_out["frames"]:  
-            img_filenames.append(str(images_output_folder/frame["file_path"]))
+        for frame in data_out["frames"]:
+            img_filenames.append(str(images_output_folder / frame["file_path"]))
             poses.append(frame["transform_matrix"])
             intrinsic = np.array(
                 [
@@ -166,20 +180,24 @@ class WoD(ADDataParser):
         return cameras, img_filenames
 
     def _get_lidars(self) -> Tuple[Lidars, Tuple[List[torch.Tensor], List[torch.Tensor]]]:
-        ''' The implementation of _get_lidar for WoD dataset actually returns directly tensors for pts_lidar and pts_missing, while
-        other dataparser provide links to files containing the point-cloud which are then processed with _read_lidar function in 
-        _generate_dataparser_output. With WoD all lidar point-cloud are stored in parquet files, and points cloud are eventually 
+        """The implementation of _get_lidar for WoD dataset actually returns directly tensors for pts_lidar and pts_missing, while
+        other dataparser provide links to files containing the point-cloud which are then processed with _read_lidar function in
+        _generate_dataparser_output. With WoD all lidar point-cloud are stored in parquet files, and points cloud are eventually
         stored in memory in DataParserOutput object. So most of the job is done within _get_lidars function.
-        
+
         :return: Tuple[Lidars, Tuple[List[Point-clouds],List[MissingPointsPcd]]]
-        '''
+        """
         if self.config.load_cuboids:
-            objects_id_to_extract = list(self.config.cuboids_ids) if self.config.cuboids_ids != None else self.objects_id.dynamic_id
+            objects_id_to_extract = (
+                list(self.config.cuboids_ids) if self.config.cuboids_ids is not None else self.objects_id.dynamic_id
+            )
         else:
             objects_id_to_extract = []
 
         export_lidar = ExportLidar(self.parquet_reader, self.select_ts, self.objects_id, self.config.output_folder)
-        poses, pts_lidar_list, missing_pts_list, times, actors = export_lidar.process(objects_id_to_extract=objects_id_to_extract)
+        poses, pts_lidar_list, missing_pts_list, times, actors = export_lidar.process(
+            objects_id_to_extract=objects_id_to_extract
+        )
 
         # save actors for later trajectories calculation
         self.actors = actors
@@ -237,7 +255,7 @@ class WoD(ADDataParser):
             allowed_classes += ALLOWED_DEFORMABLE_CLASSES
 
         rot_minus_90 = np.eye(4)
-        rot_minus_90[:3, :3] = transforms3d.euler.euler2mat(0.0, 0.0, -np.pi/2) 
+        rot_minus_90[:3, :3] = transforms3d.euler.euler2mat(0.0, 0.0, -np.pi / 2)
 
         for index, actor in self.actors.items():
             actor_type = actor["label"]
@@ -247,8 +265,8 @@ class WoD(ADDataParser):
             poses = np.array(actor["poses"]) @ rot_minus_90
             timestamps = actor["timestamps"]
             actor_dimensions = self.objects_id.id2box_dimensions[index]  # (length, width, height)
-            l, w, h = actor_dimensions.values()
-            dims = np.array([w, l, h], dtype=np.float32)
+            lenght, width, height = actor_dimensions.values()
+            dims = np.array([width, lenght, height], dtype=np.float32)
 
             symmetric = actor_type == "TYPE_VEHICLE"
             deformable = actor_type in ALLOWED_DEFORMABLE_CLASSES
@@ -259,7 +277,7 @@ class WoD(ADDataParser):
                     "timestamps": torch.tensor(timestamps, dtype=torch.float64),
                     "dims": torch.tensor(dims, dtype=torch.float32),
                     "label": actor_type,
-                    "stationary": False,       # Only 'export' dynamic objects from ExportLidar
+                    "stationary": False,  # Only 'export' dynamic objects from ExportLidar
                     "symmetric": symmetric,
                     "deformable": deformable,
                 }
@@ -267,7 +285,9 @@ class WoD(ADDataParser):
         return trajs_list
 
     def _generate_dataparser_outputs(self, split="train") -> DataparserOutputs:
-        assert self.config.dataset_end_fraction == 1.0, f"Wod data parser only support dataset_end_fraction == 1.0, value received {self.config.dataset_end_fraction}"
+        assert (
+            self.config.dataset_end_fraction == 1.0
+        ), f"Wod data parser only support dataset_end_fraction == 1.0, value received {self.config.dataset_end_fraction}"
         self.cameras_ids = [WOD_CAMERA_NAME_2_ID[cam] for cam in self.config.cameras]
         parquet_dir = str(self.config.data / self.config.parquet_dir)
         self.parquet_reader = ParquetReader(self.config.sequence, dataset_dir=parquet_dir)
