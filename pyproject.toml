@@ -73,6 +73,7 @@ dependencies = [
     "pandaset@git+https://github.com/scaleapi/pandaset-devkit.git#egg=pandaset&subdirectory=python",
     "av2==0.2.1",
     "fastapi[all]==0.110",
+    "numba==0.57",
 ]
 
 [project.optional-dependencies]
