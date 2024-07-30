@@ -35,6 +35,7 @@ from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.utils.misc import strtobool, torch_compile
 from nerfstudio.utils.tensor_dataclass import TensorDataclass
 
+# torch._dynamo.config.suppress_errors = True
 TORCH_DEVICE = Union[torch.device, str]  # pylint: disable=invalid-name
 
 HORIZONTAL_BEAM_DIVERGENCE = 3.0e-3  # radians, or meters at a distance of 1m
@@ -50,6 +51,7 @@ class LidarType(Enum):
     VELODYNE64E = auto()
     VELODYNE128 = auto()
     PANDAR64 = auto()
+    WOD64 = auto()
 
 
 LIDAR_MODEL_TO_TYPE = {
@@ -59,6 +61,7 @@ LIDAR_MODEL_TO_TYPE = {
     "VELODYNE64E": LidarType.VELODYNE64E,
     "VELODYNE128": LidarType.VELODYNE128,
     "PANDAR64": LidarType.PANDAR64,
+    "WOD64": LidarType.WOD64,
 }
 
 

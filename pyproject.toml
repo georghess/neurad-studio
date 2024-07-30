@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Neural Rendering methods that are specialized for Autonomous Driving (NeuRAD)."
 readme = "README.md"
 license = { text="Apache 2.0"}
-requires-python = ">=3.8.0"
+requires-python = ">=3.10.0"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python",
@@ -56,6 +56,7 @@ dependencies = [
     "tensorboard>=2.13.0",
     "torch>=1.13.1",
     "torchvision>=0.14.1",
+    # Added to README for later installation
     "torchmetrics[image]>=1.0.1",
     "typing_extensions>=4.4.0",
     "viser@git+https://github.com/atonderski/viser.git",
@@ -72,6 +73,7 @@ dependencies = [
     "pandaset@git+https://github.com/scaleapi/pandaset-devkit.git#egg=pandaset&subdirectory=python",
     "av2==0.2.1",
     "fastapi[all]==0.110",
+    "numba==0.57",
 ]
 
 [project.optional-dependencies]
@@ -155,7 +157,7 @@ reportMissingImports = "warning"
 reportMissingTypeStubs = false
 reportPrivateImportUsage = false
 
-pythonVersion = "3.8"
+pythonVersion = "3.10"
 pythonPlatform = "Linux"
 
 [tool.ruff]

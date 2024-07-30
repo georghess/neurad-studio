@@ -53,6 +53,7 @@ from nerfstudio.cameras.camera_paths import (
     get_spiral_path,
 )
 from nerfstudio.cameras.cameras import Cameras, CameraType, RayBundle
+from nerfstudio.cameras.lidars import transform_points
 from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager, VanillaDataManagerConfig
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
@@ -1159,16 +1160,12 @@ class DatasetRender(BaseRender):
                             if "ray_drop_prob" in lidar_output:
                                 points_in_local = points_in_local[(lidar_output["ray_drop_prob"] < 0.5).squeeze(-1)]
 
-                            points_in_world = (
-                                lidar.lidar_to_worlds[0]
-                                @ torch.cat(
-                                    [
-                                        points_in_local,
-                                        torch.ones_like(points_in_local[..., :1]),
-                                    ],
-                                    dim=-1,
-                                ).unsqueeze(-1)
-                            ).squeeze()
+                            points_in_world = transform_points(points_in_local, lidar.lidar_to_worlds[0])
+                            # get ground truth for comparison
+                            gt_point_in_world = transform_points(batch["lidar"][..., :3], lidar.lidar_to_worlds[0])
+                            plot_lidar_points(
+                                gt_point_in_world.cpu().detach().numpy(), output_path / f"gt-lidar_{lidar_idx}.png"
+                            )
                             plot_lidar_points(
                                 points_in_world.cpu().detach().numpy(), output_path / f"lidar_{lidar_idx}.png"
                             )
