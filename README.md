@@ -232,7 +232,7 @@ To add a dataset, create `nerfstudio/data/dataparsers/mydataset.py` containing o
 | 🚗 [Argoverse 2](https://www.argoverse.org/av2.html)   | 7 ring cameras + 2 stereo cameras            | 2 x 32-beam lidars                   |
 | 🚗 [PandaSet](https://pandaset.org/) ([huggingface download](https://huggingface.co/datasets/georghess/pandaset))         | 6 cameras | 64-beam lidar                                  |
 | 🚗 [KITTIMOT](https://www.cvlibs.net/datasets/kitti/eval_tracking.php) ([Timestamps](https://www.cvlibs.net/datasets/kitti/raw_data.php)) | 2 stereo cameras | 64-beam lidar
-| 🚗 [Waymo v2](https://waymo.com/open/)         | 5 cameras | 64-beam lidar   
+| 🚗 [Waymo v2](https://waymo.com/open/)         | 5 cameras | 64-beam lidar
 
 A brief introduction about Waymo dataparser for NeuRAD can be found in [waymo_dataparser.md](./nerfstudio/data//dataparsers/waymo_dataparser.md)
 
@@ -306,6 +306,9 @@ If you use this code or find our paper useful, please consider citing:
 </a>
 <a href="https://github.com/MartinEthier">
     <img src="https://github.com/MartinEthier.png" width="60px;" style="border-radius: 50%;"/>
+</a>
+<a href="https://github.com/JulienStanguennec-Leddartech">
+    <img src="https://github.com/JulienStanguennec-Leddartech.png" width="60px;" style="border-radius: 50%;"/>
 </a>
 
 \+ [nerfstudio contributors](https://github.com/nerfstudio-project/nerfstudio/graphs/contributors)
