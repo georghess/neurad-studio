@@ -23,6 +23,7 @@ from nerfstudio.cameras.camera_utils import matrix_to_rotation_6d, rotation_6d_t
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.utils import poses as pose_utils
 from nerfstudio.utils.poses import interpolate_trajectories_6d
+from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.viewer.server.viewer_elements import ViewerSlider
 
 
@@ -89,6 +90,7 @@ class DynamicActors(nn.Module):
             step=1.0,
             cb_hook=lambda obj: self.actor_editing.update({"index": obj.value}),
         )
+        self._register_load_state_dict_pre_hook(self._overwrite_shapes_hook, with_module=False)
 
     def actor_bounds(self):
         return self.actor_sizes / 2 + self.actor_padding
@@ -201,3 +203,20 @@ class DynamicActors(nn.Module):
     def get_param_groups(self, param_groups: Dict):
         if self.config.optimize_trajectories:
             param_groups["trajectory_opt"] = param_groups.get("trajectory_opt", []) + list(self.parameters())
+
+    def _overwrite_shapes_hook(self, state_dict, prefix, *_, **__):
+        state = self.state_dict()
+        print_warning = False
+
+        for name, param in state_dict.items():
+            name = name.removeprefix(prefix)
+            if name in state and state[name].shape != param.shape:
+                param = param.to(state[name].device)
+                if name in self._parameters:
+                    self.register_parameter(name, nn.Parameter(param, requires_grad=state[name].requires_grad))
+                else:
+                    self.register_buffer(name, param)
+                print_warning = True
+
+        if print_warning:
+            CONSOLE.print("Warning: found shape mismatches in dynamic actors, overwriting", style="bold red")

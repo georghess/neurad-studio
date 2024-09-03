@@ -216,6 +216,7 @@ class Trainer:
             local_rank=self.local_rank,
             grad_scaler=self.grad_scaler,
         )
+        self._load_checkpoint()  # load checkpoint before setting up optimizers in case parameters are re-registered
         self.optimizers = self.setup_optimizers()
 
         # set up viewer if enabled
@@ -249,8 +250,6 @@ class Trainer:
             )
             banner_messages = self.viewer_state.viewer_info
         self._check_viewer_warnings()
-
-        self._load_checkpoint()
 
         self.callbacks = self.pipeline.get_training_callbacks(
             TrainingCallbackAttributes(
