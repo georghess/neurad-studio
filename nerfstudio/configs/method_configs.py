@@ -396,7 +396,9 @@ for field in (model.field, model.sampling.proposal_field_1, model.sampling.propo
 method_configs["neurader-scaleopt"] = deepcopy(method_configs["neurader"])
 method_configs["neurader-scaleopt"].method_name = "neurader-scaleopt"
 method_configs["neurader-scaleopt"].pipeline.model.camera_optimizer = ScaledCameraOptimizerConfig(
-    weights=(1.0, 1.0, 0.01, 0.01, 0.01, 1.0)  # xrot, yrot, -zrot-, -xtrans-, -ytrans-, ztrans
+    weights=(1.0, 1.0, 0.01, 0.01, 0.01, 1.0),  # xrot, yrot, -zrot-, -xtrans-, -ytrans-, ztrans
+    trans_l2_penalty=(1e-2, 1e-2, 1e-3),  # x, y, z
+    mode="SO3xR3",
 )
 
 # Even longer training
@@ -404,9 +406,6 @@ method_configs["neuradest"] = _scaled_neurad_training(method_configs["neurader"]
 method_configs["neuradest-scaleopt"] = _scaled_neurad_training(
     method_configs["neurader-scaleopt"], 3, "neuradest-scaleopt"
 )
-for optimizer in method_configs["neuradest-scaleopt"].optimizers.values():
-    optimizer["optimizer"].lr *= 0.5
-    optimizer["scheduler"].lr_final *= 0.5
 
 # Configurations matching the paper (disable temporal appearance and actor flip)
 method_configs["neurad-paper"] = deepcopy(method_configs["neurad"])
