@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import io
+import threading
 from typing import Literal, Union
 
 import numpy as np
@@ -29,6 +30,7 @@ from nerfstudio.scripts.closed_loop.models import ActorTrajectory, ImageFormat, 
 from nerfstudio.scripts.closed_loop.server import ClosedLoopServer
 
 app = FastAPI()
+render_lock = threading.Lock()
 
 
 @app.get("/alive")
@@ -58,7 +60,10 @@ def update_actors(actor_trajectories: list[ActorTrajectory]) -> None:
 )
 def get_image(data: RenderInput) -> Response:
     torch_pose = torch.tensor(data.pose, dtype=torch.float32)
-    render = cl_server.get_image(torch_pose, data.timestamp, data.camera_name)
+
+    with render_lock:
+        render = cl_server.get_image(torch_pose, data.timestamp, data.camera_name)
+
     if data.image_format == ImageFormat.raw:
         return Response(content=_torch_to_bytestr(render), media_type="text/plain")
     elif data.image_format == ImageFormat.png:
