@@ -167,6 +167,8 @@ class NuScenesDataParserConfig(ADDataParserConfig):
     """Azimuth resolution for each lidar."""
     add_missing_points: bool = True
     """Add missing points to lidar point clouds."""
+    rolling_shutter_offsets: Tuple[float, float] = (0.0, 1 / 30.0)
+    """The time offset for the first and last line, relative to the image timestamp (seconds)."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
