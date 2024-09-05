@@ -186,7 +186,7 @@ class Argoverse2(ADDataParser):
     @property
     def actor_transform(self) -> torch.Tensor:
         """Argo uses x-forward, so we need to rotate to x-right."""
-        wlh_to_lwh = np.eye(4, dtype=np.float32)
+        wlh_to_lwh = np.eye(4)
         wlh_to_lwh[:3, :3] = WLH_TO_LWH
         return torch.from_numpy(wlh_to_lwh)[:3, :]
 
@@ -360,11 +360,11 @@ class Argoverse2(ADDataParser):
             assert sweep is not None
             uplidar2ego = sweep.ego_SE3_up_lidar
             all_lup2w = torch.tensor(
-                np.array([e2w.compose(uplidar2ego).transform_matrix for e2w in all_ego2w]), dtype=torch.float32
+                np.array([e2w.compose(uplidar2ego).transform_matrix for e2w in all_ego2w]), dtype=torch.float64
             )
             downlidar2ego = sweep.ego_SE3_down_lidar
             all_ldown2w = torch.tensor(
-                np.array([e2w.compose(downlidar2ego).transform_matrix for e2w in all_ego2w]), dtype=torch.float32
+                np.array([e2w.compose(downlidar2ego).transform_matrix for e2w in all_ego2w]), dtype=torch.float64
             )
             all_times = torch.from_numpy(log_pose_df["timestamp_ns"].to_numpy() / 1e9)
 

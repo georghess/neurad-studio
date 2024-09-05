@@ -310,10 +310,11 @@ class ADDataParser(DataParser):
     def _adjust_poses(self, cameras: Cameras, lidars: Lidars, trajectories: List[Dict]):
         """Determines a new, centered, world coordinate system, and adjusts all poses."""
         w2m = _get_world_to_mean_transform(cameras, lidars)
-        cameras.camera_to_worlds = pose_multiply(w2m, cameras.camera_to_worlds)
-        lidars.lidar_to_worlds = pose_multiply(w2m, lidars.lidar_to_worlds)
+        # Cast poses to float32 only after transforming to local frame to avoid precision loss
+        cameras.camera_to_worlds = pose_multiply(w2m, cameras.camera_to_worlds).to(torch.float32)
+        lidars.lidar_to_worlds = pose_multiply(w2m, lidars.lidar_to_worlds).to(torch.float32)
         for traj in trajectories:
-            traj["poses"][:, :3] = pose_multiply(w2m, traj["poses"][:, :3])
+            traj["poses"][:, :3] = pose_multiply(w2m, traj["poses"][:, :3]).to(torch.float32)
         return w2m
 
     def _get_train_eval_indices(self, sensors: Union[Cameras, Lidars]) -> Tuple[Tensor, Tensor]:
@@ -617,8 +618,8 @@ def _get_world_to_mean_transform(cameras: Cameras, lidars: Lidars):
         m2w = to4x4(select_poses[0:1])[0]
     else:
         # Otherwise
-        m2w = torch.from_numpy(_get_mean_pose_from_trajectory(select_trajectory).astype(np.float32))
-    return torch.linalg.inv(m2w)[:3]
+        m2w = torch.from_numpy(_get_mean_pose_from_trajectory(select_trajectory))
+    return torch.linalg.inv(m2w)[:3].to(poses.dtype)
 
 
 def _empty_cameras():

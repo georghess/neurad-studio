@@ -107,7 +107,7 @@ class KittiMot(ADDataParser):
     @property
     def actor_transform(self) -> Tensor:
         """The transform needed to convert the actor poses to our desired format (x-right, y-forward, z-up)."""
-        return torch.from_numpy(RIGHT_FRONT_UP2RIGHT_DOWN_FRONT)[:3, :]
+        return torch.from_numpy(RIGHT_FRONT_UP2RIGHT_DOWN_FRONT)
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
         """Returns camera info and image filenames."""

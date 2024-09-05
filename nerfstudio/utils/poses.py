@@ -174,7 +174,7 @@ def interpolate_trajectories(poses, pose_times, query_times, pose_valid_mask=Non
     right_time = pose_times[right_idx]
     left_time = pose_times[left_idx]
     time_diff = right_time - left_time + 1e-6
-    fraction = (qt - left_time) / time_diff  # 0 = all left, 1 = all right
+    fraction = ((qt - left_time) / time_diff).to(poses.dtype)  # 0 = all left, 1 = all right
     if clamp_frac:
         fraction = fraction.clamp(0.0, 1.0)  # clamp to handle out of bounds
 

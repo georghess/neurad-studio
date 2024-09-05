@@ -191,7 +191,7 @@ class Zod(ADDataParser):
     @property
     def actor_transform(self) -> torch.Tensor:
         """ZOD uses x-forward, so we need to rotate to x-right."""
-        return torch.from_numpy(WLH_TO_LWH)[:3, :]
+        return torch.from_numpy(WLH_TO_LWH)
 
     def _get_lane_shift_sign(self, sequence: str) -> Literal[-1, 1]:
         return LANE_SHIFT_SIGN.get(sequence, 1)

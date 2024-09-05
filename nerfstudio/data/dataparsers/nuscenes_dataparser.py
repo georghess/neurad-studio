@@ -185,7 +185,7 @@ class NuScenes(ADDataParser):
     @property
     def actor_transform(self) -> torch.Tensor:
         """Nuscenes uses x-forward, so we need to rotate to x-right."""
-        return torch.from_numpy(WLH_TO_LWH)[:3, :]
+        return torch.from_numpy(WLH_TO_LWH)
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
         if "all" in self.config.cameras:
