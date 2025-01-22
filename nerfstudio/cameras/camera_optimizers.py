@@ -47,7 +47,7 @@ class CameraOptimizerConfig(InstantiateConfig):
     mode: Literal["off", "SO3xR3", "SE3"] = "off"
     """Pose optimization strategy to use. If enabled, we recommend SO3xR3."""
 
-    trans_l2_penalty: float = 1e-2
+    trans_l2_penalty: Union[Tuple, float] = 1e-2
     """L2 penalty on translation parameters."""
 
     rot_l2_penalty: float = 1e-3
@@ -206,9 +206,20 @@ class ScaledCameraOptimizerConfig(CameraOptimizerConfig):
 
     _target: Type = field(default_factory=lambda: ScaledCameraOptimizer)
 
-    weights: Tuple[float, float, float, float, float, float] = (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+    weights: Tuple[float, float, float, float, float, float] = (
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+    )
 
-    trans_l2_penalty: Tuple[float, float, float] = (1e-2, 1e-2, 1e-2)  # TODO: this is l1
+    trans_l2_penalty: Union[Tuple[float, float, float], float] = (
+        1e-2,
+        1e-2,
+        1e-2,
+    )  # TODO: this is l1
 
 
 class ScaledCameraOptimizer(CameraOptimizer):

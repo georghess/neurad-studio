@@ -360,7 +360,11 @@ method_configs["neurad-scaleopt"] = deepcopy(method_configs["neurad"])
 method_configs["neurad-scaleopt"].method_name = "neurad-scaleopt"
 method_configs["neurad-scaleopt"].pipeline.model.camera_optimizer = ScaledCameraOptimizerConfig(
     weights=(1.0, 1.0, 0.01, 0.01, 0.01, 1.0),  # xrot, yrot, zrot, xtrans, ytrans, ztrans
-    trans_l2_penalty=(1e-2, 1e-2, 1e-3),  # x, y, z
+    trans_l2_penalty=(
+        1e-2,
+        1e-2,
+        1e-3,
+    ),  # x, y, z
     mode="SO3xR3",
 )
 
@@ -397,7 +401,11 @@ method_configs["neurader-scaleopt"] = deepcopy(method_configs["neurader"])
 method_configs["neurader-scaleopt"].method_name = "neurader-scaleopt"
 method_configs["neurader-scaleopt"].pipeline.model.camera_optimizer = ScaledCameraOptimizerConfig(
     weights=(1.0, 1.0, 0.01, 0.01, 0.01, 1.0),  # xrot, yrot, -zrot-, -xtrans-, -ytrans-, ztrans
-    trans_l2_penalty=(1e-2, 1e-2, 1e-3),  # x, y, z
+    trans_l2_penalty=(
+        1e-2,
+        1e-2,
+        1e-3,
+    ),  # x, y, z
     mode="SO3xR3",
 )
 
