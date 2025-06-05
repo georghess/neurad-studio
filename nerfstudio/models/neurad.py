@@ -315,7 +315,7 @@ class NeuRADModel(ADModel):
         intensity_for_cam: bool = False,
         calc_lidar_losses: bool = True,
     ):
-        if self.training:
+        if self.training or self.config.use_camopt_in_eval:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
         nff_outputs = self.get_nff_outputs(ray_bundle, calc_lidar_losses)
         rgb, intensity, ray_drop_logits = self.decode_features(
@@ -329,9 +329,9 @@ class NeuRADModel(ADModel):
         if rgb is not None:
             nff_outputs["rgb"] = rgb
         if intensity is not None:
-            nff_outputs["intensity"] = intensity.float()
+            nff_outputs["intensity"] = intensity
         if ray_drop_logits is not None:
-            nff_outputs["ray_drop_logits"] = ray_drop_logits.float()
+            nff_outputs["ray_drop_logits"] = ray_drop_logits
         return nff_outputs
 
     def decode_features(
@@ -627,6 +627,12 @@ class NeuRADModel(ADModel):
         Args:
             camera_ray_bundle: ray bundle to calculate outputs over
         """
+        if self.training or self.config.use_camopt_in_eval:
+            ray_bundle_shape = camera_ray_bundle.shape
+            camera_ray_bundle = camera_ray_bundle.flatten()
+            self.camera_optimizer.apply_to_raybundle(camera_ray_bundle)
+            camera_ray_bundle = camera_ray_bundle.reshape(ray_bundle_shape)
+
         if len(camera_ray_bundle.shape) == 1:  # lidar
             output_size, patch_size = (camera_ray_bundle.shape[0],), (1, 1)
             is_lidar = torch.ones_like(camera_ray_bundle.pixel_area, dtype=torch.bool)

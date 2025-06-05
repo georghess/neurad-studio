@@ -49,7 +49,7 @@ LIDAR_NAME_TO_INDEX = {
 PANDASET_SEQ_LEN = 80
 EXTRINSICS_FILE_PATH = os.path.join(os.path.dirname(__file__), "pandaset_extrinsics.yaml")
 MAX_RELECTANCE_VALUE = 255.0
-
+BACK_CAMERA_BOTTOM_CROP = 260
 ALLOWED_RIGID_CLASSES = (
     "Car",
     "Pickup Truck",
@@ -90,7 +90,7 @@ LANE_SHIFT_SIGN.update(
     }
 )
 
-PANDASET_AZIMUT_RESOLUTION = {"Pandar64": 0.2}
+PANDASET_AZIMUTH_RESOLUTION = {"Pandar64": 0.2}
 PANDASET_SKIP_ELEVATION_CHANNELS = {
     "Pandar64": (
         62,
@@ -139,9 +139,11 @@ class PandaSetDataParserConfig(ADDataParserConfig):
     """Elevation mapping for each lidar."""
     skip_elevation_channels: Dict[str, Tuple] = field(default_factory=lambda: PANDASET_SKIP_ELEVATION_CHANNELS)
     """Channels to skip when adding missing points."""
-    lidar_azimuth_resolution: Dict[str, float] = field(default_factory=lambda: PANDASET_AZIMUT_RESOLUTION)
+    lidar_azimuth_resolution: Dict[str, float] = field(default_factory=lambda: PANDASET_AZIMUTH_RESOLUTION)
     """Azimuth resolution for each lidar."""
-    rolling_shutter_offsets: Tuple[float, float] = (-0.03, 0.01)
+    rolling_shutter_time: float = 0.03
+    """The rolling shutter time for the cameras (seconds)."""
+    time_to_center_pixel: float = -0.01
     """In pandaset the image time seems to line up with the final row."""
 
 
@@ -185,7 +187,7 @@ class PandaSet(ADDataParser):
                 poses.append(pose)
                 times.append(curr_cam.timestamps[i])
                 idxs.append(cameras.index(camera))
-                heights.append(1080 - (250 if camera == "back_camera" else 0))
+                heights.append(1080 - (BACK_CAMERA_BOTTOM_CROP if camera == "back_camera" else 0))
 
         intrinsics = torch.tensor(np.array(intrinsics), dtype=torch.float32)
         poses = torch.tensor(np.array(poses), dtype=torch.float32)
@@ -309,7 +311,9 @@ class PandaSet(ADDataParser):
             for pc, time in zip(missing_points, times):
                 pc[:, 4] -= time
             # add missing points to point clouds
-            point_clouds = [torch.cat([pc, missing], dim=0) for pc, missing in zip(point_clouds, missing_points)]
+            point_clouds = [
+                torch.cat([pc, missing], dim=0).float() for pc, missing in zip(point_clouds, missing_points)
+            ]
 
         lidars.lidar_to_worlds = lidars.lidar_to_worlds.float()
 
@@ -386,6 +390,10 @@ class PandaSet(ADDataParser):
 
     def _generate_dataparser_outputs(self, split="train") -> DataparserOutputs:
         pandaset = DataSet(str(self.config.data.absolute()))
+
+        if self.config.sequence not in pandaset.sequences():
+            raise ValueError(f"Sequence {self.config.sequence} not found in {self.config.data}")
+
         self.sequence = pandaset[self.config.sequence]
         self.sequence.load()
         self.extrinsics = yaml.load(open(EXTRINSICS_FILE_PATH, "r"), Loader=yaml.FullLoader)

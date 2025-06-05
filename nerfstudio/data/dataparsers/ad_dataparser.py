@@ -15,6 +15,7 @@
 """Base data parser for Autonomous Driving datasets."""
 
 import math
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -22,15 +23,14 @@ from typing import Dict, List, Literal, Optional, Tuple, Type, TypeVar, Union
 
 import numpy as np
 import torch
-from PIL import Image
 from torch import Tensor
 
 from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.cameras.lidars import Lidars, transform_points
+from nerfstudio.cameras.lidars import Lidars
 from nerfstudio.data.dataparsers.base_dataparser import DataParser, DataParserConfig, DataparserOutputs
 from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.utils import poses as pose_utils
-from nerfstudio.utils.poses import interpolate_trajectories, inverse, multiply as pose_multiply, to4x4
+from nerfstudio.utils.poses import interpolate_trajectories, multiply as pose_multiply, to4x4
 
 SensorData = TypeVar("SensorData", Cameras, Lidars)
 
@@ -88,8 +88,12 @@ class ADDataParserConfig(DataParserConfig):
     """Whether to include deformable actors in the loaded trajectories (like pedestrians)."""
     annotation_interval: float = 0.0
     """The time interval at which the sequence is annotated (s)."""
-    rolling_shutter_offsets: Tuple[float, float] = (0.0, 0.0)
-    """The time offset for the first and last line, relative to the image timestamp (seconds)."""
+    trajectory_extrapolation_length: float = 1.0
+    """The amount of time to extrapolate the trajectory (s)."""
+    rolling_shutter_time: float = 0.0
+    """The rolling shutter time for the cameras (seconds)."""
+    time_to_center_pixel: float = 0.0
+    """The time offset for the center pixel, relative to the image timestamp (seconds)."""
     allow_per_point_times: bool = True
     """Whether to allow per-point times (for sub-frame time correction)."""
 
@@ -101,8 +105,6 @@ class ADDataParserConfig(DataParserConfig):
     """Channels to skip when adding missing points."""
     lidar_azimuth_resolution: Optional[Dict[str, float]] = None
     """Azimuth resolution for each lidar."""
-    paint_points: bool = False
-    """Whether to paint the points in the point cloud."""
 
     def __post_init__(self):
         if type(self) == ADDataParserConfig:
@@ -130,7 +132,7 @@ class ADDataParser(DataParser):
 
     @property
     def actor_transform(self) -> Tensor:
-        """Transform to convert from our actor frame (x-right, y-forward, z-up) to the original actor frame (3x4)."""
+        """The transform to convert from our actor frame (x-right, y-forward, z-up) to the original actor frame."""
         return torch.eye(4)[:3, :]
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
@@ -208,13 +210,16 @@ class ADDataParser(DataParser):
 
         # sensor_times = torch.cat([cameras.times, lidars.times], dim=0).squeeze(-1).unique()
         sensor_times = lidars.times.squeeze(-1).unique()
-        trajectories = self._interpolate_trajectories(trajectories, sensor_times, self.config.annotation_interval)
+        trajectories = self._interpolate_trajectories(
+            trajectories, sensor_times, self.config.trajectory_extrapolation_length
+        )
+        if len(trajectories) > 0:
+            trajectories = self._add_trajectories_velocities(trajectories)
+
         # remove empty trajectories
         trajectories = [traj for traj in trajectories if len(traj["timestamps"]) > 1]
 
-        point_clouds_rgb = (
-            None if not self.config.paint_points else _paint_points(lidars, point_clouds, cameras, img_filenames)
-        )
+        point_clouds_times = [t.repeat(len(point_clouds[i])) for i, t in enumerate(lidars.times.squeeze(-1))]
 
         # Massage into output format
         return DataparserOutputs(
@@ -224,16 +229,17 @@ class ADDataParser(DataParser):
             mask_filenames=None,  # TODO: handle masks
             dataparser_scale=1.0,  # no scaling
             dataparser_transform=dataparser_transform,
-            actor_transform=self.actor_transform[:3, :].float(),
+            actor_transform=self.actor_transform,
             time_offset=time_offset,
             metadata={
                 "lidars": lidars,
                 "point_clouds": [pc.float() for pc in point_clouds],  # Ensure they are float32
-                "point_clouds_rgb": point_clouds_rgb,
+                "point_clouds_times": point_clouds_times,
                 "trajectories": trajectories,
                 "lane_shift_sign": self._get_lane_shift_sign(self.config.sequence),
                 "sensor_idx_to_name": sensor_idx_to_name,
-                "duration": max(cameras.times.max(), lidars.times.max()) - min(cameras.times.min(), lidars.times.min()),
+                "duration": torch.cat([cameras.times, lidars.times]).max()
+                - torch.cat([cameras.times, lidars.times]).min(),
             },
         )
 
@@ -310,11 +316,10 @@ class ADDataParser(DataParser):
     def _adjust_poses(self, cameras: Cameras, lidars: Lidars, trajectories: List[Dict]):
         """Determines a new, centered, world coordinate system, and adjusts all poses."""
         w2m = _get_world_to_mean_transform(cameras, lidars)
-        # Cast poses to float32 only after transforming to local frame to avoid precision loss
-        cameras.camera_to_worlds = pose_multiply(w2m, cameras.camera_to_worlds).to(torch.float32)
-        lidars.lidar_to_worlds = pose_multiply(w2m, lidars.lidar_to_worlds).to(torch.float32)
+        cameras.camera_to_worlds = pose_multiply(w2m, cameras.camera_to_worlds)
+        lidars.lidar_to_worlds = pose_multiply(w2m, lidars.lidar_to_worlds)
         for traj in trajectories:
-            traj["poses"][:, :3] = pose_multiply(w2m, traj["poses"][:, :3]).to(torch.float32)
+            traj["poses"][:, :3] = pose_multiply(w2m, traj["poses"][:, :3])
         return w2m
 
     def _get_train_eval_indices(self, sensors: Union[Cameras, Lidars]) -> Tuple[Tensor, Tensor]:
@@ -354,52 +359,88 @@ class ADDataParser(DataParser):
         """Adds the sensor velocities to the metadata."""
         assert cameras.metadata is not None and lidars.metadata is not None, "Must have metadata"
         cameras.metadata["velocities"] = torch.zeros_like(cameras.camera_to_worlds[:, :3, 3])
+        cameras.metadata["linear_velocities_local"] = torch.zeros_like(cameras.camera_to_worlds[:, :3, 3])
+        cameras.metadata["angular_velocities_local"] = torch.zeros_like(cameras.camera_to_worlds[:, :3, 3])
         for sensor_idx in cameras.metadata["sensor_idxs"].unique():
             mask = (cameras.metadata["sensor_idxs"] == sensor_idx).squeeze(-1)
             cam2worlds, times = cameras.camera_to_worlds[mask], cameras.times[mask]
-            velo = (cam2worlds[1:, :3, 3] - cam2worlds[:-1, :3, 3]) / (times[1:] - times[:-1])
-            cameras.metadata["velocities"][mask] = torch.cat((velo, velo[-1:]), 0)
-        cameras.metadata["rolling_shutter_offsets"] = (
-            torch.tensor(self.config.rolling_shutter_offsets).unsqueeze(0).repeat(len(cameras), 1)
+            translation_velo = (cam2worlds[1:, :3, 3] - cam2worlds[:-1, :3, 3]) / (times[1:] - times[:-1])
+            next_cam = cam2worlds[1:]
+            prev_cam = cam2worlds[:-1]
+            next_cam_2_prev_cam = pose_utils.to4x4(pose_utils.inverse(prev_cam)) @ pose_utils.to4x4(next_cam)
+            translation_velo_cam_ref = next_cam_2_prev_cam[:, :3, 3] / (times[1:] - times[:-1])
+            angular_velo = pose_utils.rotation_difference(cam2worlds[:-1, :3, :3], cam2worlds[1:, :3, :3]) / (
+                times[1:] - times[:-1]
+            )
+            cameras.metadata["velocities"][mask] = torch.cat((translation_velo, translation_velo[-1:]), 0)
+            cameras.metadata["linear_velocities_local"][mask] = torch.cat(
+                (translation_velo_cam_ref, translation_velo_cam_ref[-1:]), 0
+            )
+
+            cameras.metadata["angular_velocities_local"][mask] = torch.cat((angular_velo, angular_velo[-1:]), 0)
+        cameras.metadata["rolling_shutter_time"] = (
+            torch.tensor(self.config.rolling_shutter_time).unsqueeze(0).repeat(len(cameras), 1)
+        )
+        cameras.metadata["time_to_center_pixel"] = (
+            torch.tensor(self.config.time_to_center_pixel).unsqueeze(0).repeat(len(cameras), 1)
         )
 
         lidars.metadata["velocities"] = torch.zeros_like(lidars.lidar_to_worlds[:, :3, 3])
+        lidars.metadata["linear_velocities_local"] = torch.zeros_like(lidars.lidar_to_worlds[:, :3, 3])
+        lidars.metadata["angular_velocities_local"] = torch.zeros_like(lidars.lidar_to_worlds[:, :3, 3])
         for sensor_idx in lidars.metadata["sensor_idxs"].unique():
             mask = (lidars.metadata["sensor_idxs"] == sensor_idx).squeeze(-1)
             lidar2worlds, times = lidars.lidar_to_worlds[mask], lidars.times[mask]
-            velo = (lidar2worlds[1:, :3, 3] - lidar2worlds[:-1, :3, 3]) / (times[1:] - times[:-1])
-            lidars.metadata["velocities"][mask] = torch.cat((velo, velo[-1:]), 0)
+            translation_velo = (lidar2worlds[1:, :3, 3] - lidar2worlds[:-1, :3, 3]) / (times[1:] - times[:-1])
+            next_lidar = lidar2worlds[1:]
+            prev_lidar = lidar2worlds[:-1]
+            next_lidar_in_prev_lidar = pose_utils.to4x4(pose_utils.inverse(prev_lidar)) @ pose_utils.to4x4(next_lidar)
+            translation_velo_lidar_ref = next_lidar_in_prev_lidar[:, :3, 3] / (times[1:] - times[:-1])
+            angular_velo = pose_utils.rotation_difference(lidar2worlds[:-1, :3, :3], lidar2worlds[1:, :3, :3]) / (
+                times[1:] - times[:-1]
+            )
+            lidars.metadata["velocities"][mask] = torch.cat((translation_velo, translation_velo[-1:]), 0)
+            lidars.metadata["linear_velocities_local"][mask] = torch.cat(
+                (translation_velo_lidar_ref, translation_velo_lidar_ref[-1:]), 0
+            )
+            lidars.metadata["angular_velocities_local"][mask] = torch.cat((angular_velo, angular_velo[-1:]), 0)
 
     def _interpolate_trajectories(self, trajectories: List[Dict], timestamps: Tensor, extrapolation_length: float):
         # sort query times, just to be sure
         timestamps = timestamps.sort().values
-        eps = 1e-3  # Because of floating point errors
-        for traj in trajectories:
-            dist = extrapolation_length - eps
-            extrap_back = (timestamps > (traj["timestamps"][0] - dist)) & (timestamps < traj["timestamps"][0])
-            if extrap_back.any():
-                # Duplicate the first pose to pad the trajectory
-                new_time = timestamps[extrap_back].min()
-                new_pose = traj["poses"][0].clone()  # TODO: could extrapolate pose instead of duplicating
-                traj["poses"] = torch.cat([new_pose.unsqueeze(0), traj["poses"]], dim=0)
-                traj["timestamps"] = torch.cat([new_time.unsqueeze(0), traj["timestamps"]], dim=0)
-
-            extrap_forward = (timestamps < (traj["timestamps"][-1] + dist)) & (timestamps > traj["timestamps"][-1])
-            if extrap_forward.any():
-                # Duplicate the last pose to pad the trajectory
-                new_time = timestamps[extrap_forward].max()
-                new_pose = traj["poses"][-1].clone()
-                traj["poses"] = torch.cat([traj["poses"], new_pose.unsqueeze(0)], dim=0)
-                traj["timestamps"] = torch.cat([traj["timestamps"], new_time.unsqueeze(0)], dim=0)
-
+        for i, traj in enumerate(trajectories):
             assert torch.all(traj["timestamps"][1:] >= traj["timestamps"][:-1]), "Trajectory timestamps must be sorted"
             # Only query for times between min and max of trajectory
-            query_times = timestamps[timestamps >= traj["timestamps"][0] - eps]
-            query_times = query_times[query_times <= traj["timestamps"][-1] + eps]
+            query_times = timestamps[timestamps >= traj["timestamps"][0] - extrapolation_length]
+            query_times = query_times[query_times <= traj["timestamps"][-1] + extrapolation_length]
+            # query_times = timestamps
             # interpolate_poses expects num_poses x num_trajectories x 4 x 4, so we unsqueeze to get a single trajectory
-            new_poses, _, _ = interpolate_trajectories(traj["poses"].unsqueeze(1), traj["timestamps"], query_times)
+            new_poses, _, _ = interpolate_trajectories(
+                traj["poses"].unsqueeze(1), traj["timestamps"], query_times, clamp_frac=False
+            )
             traj["poses"] = to4x4(new_poses)
             traj["timestamps"] = query_times
+        return trajectories
+
+    def _add_trajectories_velocities(self, trajectories: List[Dict]):
+        cloned_trajectories = deepcopy(trajectories)
+        unique_timestamps = torch.cat([traj["timestamps"] for traj in cloned_trajectories]).unique()
+        interpolated_trajectories = self._interpolate_trajectories(cloned_trajectories, unique_timestamps, 1e6)
+        for i, traj in enumerate(trajectories):
+            interpolated_traj = interpolated_trajectories[i]
+            linear_velocities_global = (
+                interpolated_traj["poses"][1:, :3, 3] - interpolated_traj["poses"][:-1, :3, 3]
+            ) / (interpolated_traj["timestamps"][1:] - interpolated_traj["timestamps"][:-1]).reshape(-1, 1)
+            linear_velocities_global = torch.cat((linear_velocities_global, linear_velocities_global[-1:]), 0)
+            angular_velocities_local = pose_utils.rotation_difference(
+                interpolated_traj["poses"][:-1, :3, :3], interpolated_traj["poses"][1:, :3, :3]
+            ) / (interpolated_traj["timestamps"][1:] - interpolated_traj["timestamps"][:-1]).reshape(-1, 1)
+            angular_velocities_local = torch.cat((angular_velocities_local, angular_velocities_local[-1:]), 0)
+            # insert at the correct timestamps
+            traj["linear_velocities_global"] = torch.zeros_like(traj["poses"][..., :3])
+            traj["linear_velocities_global"] = linear_velocities_global
+            traj["angular_velocities_local"] = torch.zeros_like(traj["poses"])
+            traj["angular_velocities_local"] = angular_velocities_local
         return trajectories
 
     @staticmethod
@@ -447,7 +488,7 @@ class ADDataParser(DataParser):
             outlier_thresh: Threshold for outlier elevation values. If the median elevation of the missing points is more than this value away from the median elevation of the points in the channel, we ignore the missing points.
 
         Returns:
-            Missing points in the point cloud, in world_frame. Shape: [num_points, 3+x] x,y,z,(timestamp, intensity, etc.)
+            Missing points in the point cloud, in world_frame. Shape: [num_points, 4+x] x,y,z,channel_id(timestamp, intensity, etc.)
         """
         dist = torch.norm(point_cloud[:, :3], dim=-1)
         dist_mask = dist > dist_cutoff
@@ -618,8 +659,8 @@ def _get_world_to_mean_transform(cameras: Cameras, lidars: Lidars):
         m2w = to4x4(select_poses[0:1])[0]
     else:
         # Otherwise
-        m2w = torch.from_numpy(_get_mean_pose_from_trajectory(select_trajectory))
-    return torch.linalg.inv(m2w)[:3].to(poses.dtype)
+        m2w = torch.from_numpy(_get_mean_pose_from_trajectory(select_trajectory).astype(np.float32))
+    return torch.linalg.inv(m2w)[:3]
 
 
 def _empty_cameras():
@@ -650,51 +691,3 @@ def _filter_sensordata_on_time(
     data = data[mask.squeeze(-1)]
     filepaths = [filepaths[i] for i in range(len(filepaths)) if mask[i]]
     return data, filepaths
-
-
-def _paint_points(lidars: Lidars, point_clouds: List[Tensor], cameras: Cameras, image_filenames: List[Path]):
-    """Paints the points in the point cloud."""
-    point_clouds_rgb = []
-    img_cache = []
-    for img_filename in image_filenames:
-        pil_image = Image.open(img_filename)
-        image = np.array(pil_image, dtype="uint8")
-        image = torch.from_numpy(image)
-        img_cache.append(image)
-
-    for lidar, pc in zip(lidars, point_clouds):
-        pc = pc.clone().float()
-        pc_in_world = transform_points(pc[:, :3], lidar.lidar_to_worlds)
-        point_cloud_rgb = torch.rand_like(pc[:, :3]) * 255
-
-        lidar_time = lidar.times.squeeze(-1)
-        top_k_cam_idx = torch.topk(
-            (cameras.times - lidar_time).abs().squeeze(), len(cameras.metadata["sensor_idxs"].unique()), largest=False
-        ).indices
-        for cam_idx in top_k_cam_idx.flip(0):
-            camera = cameras[cam_idx]
-            pc_in_camera = transform_points(pc_in_world, inverse(camera.camera_to_worlds.squeeze(0)))
-            # Flip the y and z axis because of nerfstudio conventions
-            pc_in_camera[:, 1] = -pc_in_camera[:, 1]
-            pc_in_camera[:, 2] = -pc_in_camera[:, 2]
-            # Only paint points in front of the camera
-            valid_points = pc_in_camera[:, 2] > 0
-            # Normalize the points
-            pc_in_camera = pc_in_camera / pc_in_camera[:, 2:]
-
-            intrinsics = camera.get_intrinsics_matrices().squeeze(0)
-            pc_in_image = (torch.matmul(intrinsics, pc_in_camera[:, :3].T).T).to(torch.int64)
-
-            valid_points = (
-                valid_points
-                & (pc_in_image[:, 0] >= 0)
-                & (pc_in_image[:, 0] < camera.width)
-                & (pc_in_image[:, 1] >= 0)
-                & (pc_in_image[:, 1] < camera.height)
-            )
-
-            image = img_cache[cam_idx]
-            point_cloud_rgb[valid_points] = (image[pc_in_image[valid_points, 1], pc_in_image[valid_points, 0]]).float()
-        point_clouds_rgb.append(point_cloud_rgb)
-
-    return point_clouds_rgb

@@ -35,7 +35,7 @@ from nerfstudio.data.dataparsers.ad_dataparser import (
     ADDataParser,
     ADDataParserConfig,
 )
-from nerfstudio.data.utils.lidar_elevation_mappings import VELODYNE_VLP32C_ELEVATION_MAPPING
+from nerfstudio.data.utils.lidar_elevation_mappings import ARGOVERSE2_VELODYNE_VLP32C_ELEVATION_MAPPING
 from nerfstudio.utils import poses as pose_utils
 
 MAX_REFLECTANCE_VALUE = 255.0
@@ -107,11 +107,11 @@ AVAILABLE_CAMERAS = (
     "ring_side_right",
 )
 
+AVAILABLE_LIDARS = ("lidar_up", "lidar_down")
+
 
 # lidar_up is the upper lidar, lidar_down is the lower lidar, and lidar is short for any of them
-AV2_VELO_VLP32C_ELEVATION_MAPPING = {
-    i: j for i, j in enumerate(sorted(VELODYNE_VLP32C_ELEVATION_MAPPING.values(), reverse=True))
-}
+AV2_VELO_VLP32C_ELEVATION_MAPPING = ARGOVERSE2_VELODYNE_VLP32C_ELEVATION_MAPPING
 AV2_ELEVATION_MAPPING = {
     "lidar_down": AV2_VELO_VLP32C_ELEVATION_MAPPING,
     "lidar_up": AV2_VELO_VLP32C_ELEVATION_MAPPING,
@@ -124,8 +124,8 @@ AV2_AZIMUTH_RESOLUTION = {
 }  # degrees
 AV2_SKIP_ELEVATION_CHANNELS = {
     "lidar": (0, 1, 2),
-    "lidar_down": (0, 1, 2),  # corresponding to 15,10.333,7.0 degrees as lidar_down is upside down
-    "lidar_up": (29, 30, 31),  # corresponding to -25,-15.639,-11.31 degrees
+    "lidar_down": (4, 15, 0),  # corresponding to 15,10.333,7.0 degrees as lidar_down is upside down
+    "lidar_up": (0, 3, 4),  # corresponding to -25,-15.639,-11.31 degrees
 }
 AV2_IGNORE_REGIONS = {
     "lidar_down": [[140, 200, -30.0, 20.0], [-200.0, -170.0, -30.0, 20.0]],
@@ -159,7 +159,7 @@ class Argoverse2DataParserConfig(ADDataParserConfig):
         ...,
     ] = ("all",)
     """what cameras to use"""
-    lidars: Tuple[Literal["lidar", "none"], ...] = ("lidar",)
+    lidars: Tuple[Literal["lidar_up", "lidar_down", "all", "none"], ...] = ("all",)
     """what lidars to use. only one lidar is available."""
     annotation_interval: float = 0.1
     """interval between annotations in seconds"""
@@ -173,8 +173,8 @@ class Argoverse2DataParserConfig(ADDataParserConfig):
     """Azimuth resolution for each lidar."""
     skip_elevation_channels: Dict[str, Tuple] = field(default_factory=lambda: AV2_SKIP_ELEVATION_CHANNELS)
     """Channels to skip when adding missing points."""
-    max_eval_frames: int = 100
-    """maximum number of frames to use for evaluation"""
+    output_lidars_separately: bool = True
+    """whether to output the two combined lidars as separate instances"""
 
 
 @dataclass
@@ -188,7 +188,7 @@ class Argoverse2(ADDataParser):
         """Argo uses x-forward, so we need to rotate to x-right."""
         wlh_to_lwh = np.eye(4)
         wlh_to_lwh[:3, :3] = WLH_TO_LWH
-        return torch.from_numpy(wlh_to_lwh)[:3, :]
+        return torch.from_numpy(wlh_to_lwh)
 
     def _get_cameras(self) -> Tuple[Cameras, List[Path]]:
         """Returns camera info and image filenames."""
@@ -258,6 +258,9 @@ class Argoverse2(ADDataParser):
             idxs,
         ) = ([], [], [], [], [])
 
+        if "all" in self.config.lidars:
+            self.config.lidars = AVAILABLE_LIDARS
+
         lidar_times = self.av2.get_ordered_log_lidar_timestamps(self.config.sequence)
 
         for t in lidar_times:
@@ -288,21 +291,37 @@ class Argoverse2(ADDataParser):
         idxs = torch.tensor(np.array(idxs)).int().unsqueeze(-1)
         # we will store the down2up transformation in the metadata, as we will need it later
         down2up = down2up.repeat(len(poses_up), 1, 1).view(len(poses_up), -1)
-        poses_down = poses_down.view(len(poses_up), -1)
 
-        lidars = Lidars(
-            lidar_to_worlds=poses_up[:, :3, :4],
-            lidar_type=LidarType.VELODYNE_VLP32C,
-            times=times,
-            metadata={
-                "sensor_idxs": idxs,
-                "down2up": down2up,  # will be removed later
-                "poses_down": poses_down,  # will be removed later
-            },
-            horizontal_beam_divergence=HORIZONTAL_BEAM_DIVERGENCE,
-            vertical_beam_divergence=VERTICAL_BEAM_DIVERGENCE,
-            valid_lidar_distance_threshold=DUMMY_DISTANCE_VALUE / 2,
-        )
+        if self.config.output_lidars_separately:
+            lidars = Lidars(
+                lidar_to_worlds=torch.cat([poses_up, poses_down], dim=0)[:, :3, :4],
+                lidar_type=LidarType.VELODYNE_VLP32C,
+                times=torch.cat([times, times], dim=0),
+                metadata={
+                    "sensor_idxs": torch.cat([idxs, idxs + (idxs.max() + 1)], dim=0),
+                    "down2up": torch.cat([down2up, down2up], dim=0),  # will be removed later, here for compatibility
+                    "poses_down": torch.cat(
+                        [poses_down.view(len(poses_up), -1), poses_down.view(len(poses_up), -1)], dim=0
+                    ),  # will be removed later, here for compatibility
+                },
+                horizontal_beam_divergence=HORIZONTAL_BEAM_DIVERGENCE,
+                vertical_beam_divergence=VERTICAL_BEAM_DIVERGENCE,
+                valid_lidar_distance_threshold=DUMMY_DISTANCE_VALUE / 2,
+            )
+        else:
+            lidars = Lidars(
+                lidar_to_worlds=poses_up[:, :3, :4],
+                lidar_type=LidarType.VELODYNE_VLP32C,
+                times=times,
+                metadata={
+                    "sensor_idxs": idxs,
+                    "down2up": down2up,  # will be removed later
+                    "poses_down": poses_down.view(len(poses_up), -1),  # will be removed later
+                },
+                horizontal_beam_divergence=HORIZONTAL_BEAM_DIVERGENCE,
+                vertical_beam_divergence=VERTICAL_BEAM_DIVERGENCE,
+                valid_lidar_distance_threshold=DUMMY_DISTANCE_VALUE / 2,
+            )
 
         return lidars, lidar_filenames
 
@@ -343,7 +362,8 @@ class Argoverse2(ADDataParser):
             point_clouds_up.append(torch.from_numpy(xyz_intensity_up))
             point_clouds_down.append(torch.from_numpy(xyz_intensity_down))
 
-        missing_points = []
+        missing_points_up = []
+        missing_points_down = []
 
         assert lidars.times is not None  # typehints
         assert lidars.metadata is not None  # typehints
@@ -360,18 +380,17 @@ class Argoverse2(ADDataParser):
             assert sweep is not None
             uplidar2ego = sweep.ego_SE3_up_lidar
             all_lup2w = torch.tensor(
-                np.array([e2w.compose(uplidar2ego).transform_matrix for e2w in all_ego2w]), dtype=torch.float64
+                np.array([e2w.compose(uplidar2ego).transform_matrix for e2w in all_ego2w]), dtype=torch.float32
             )
             downlidar2ego = sweep.ego_SE3_down_lidar
             all_ldown2w = torch.tensor(
-                np.array([e2w.compose(downlidar2ego).transform_matrix for e2w in all_ego2w]), dtype=torch.float64
+                np.array([e2w.compose(downlidar2ego).transform_matrix for e2w in all_ego2w]), dtype=torch.float32
             )
             all_times = torch.from_numpy(log_pose_df["timestamp_ns"].to_numpy() / 1e9)
 
             for i, (pc_up, pc_down, lup2w, ldown2w, time) in enumerate(
                 zip(point_clouds_up, point_clouds_down, poses_up, poses_down, times)
             ):
-                mp = []
                 for j, (pc_, l2w) in enumerate(zip((pc_up, pc_down), (lup2w, ldown2w))):
                     pc = pc_.clone().to(torch.float64)
                     # relative -> absolute time
@@ -402,29 +421,44 @@ class Argoverse2(ADDataParser):
                         interpolated_poses,
                         lidar_name,
                         dist_cutoff=0.0,
-                        outlier_thresh=10.0,
+                        outlier_thresh=0.2,
                         ignore_regions=AV2_IGNORE_REGIONS[lidar_name],
                     )
                     if j == 1:  # down_lidar
                         miss_points[..., 3] += 32
-                        miss_points[..., :3] = transform_points(
-                            miss_points[..., :3], down2up.unsqueeze(0).to(miss_points)
-                        )
+                        if not self.config.output_lidars_separately:
+                            miss_points[..., :3] = transform_points(
+                                miss_points[..., :3], down2up.unsqueeze(0).to(miss_points)
+                            )
                     # move channel back from index 3 to 5
                     miss_points = miss_points[..., [0, 1, 2, 4, 5, 3]]
-                    mp.append(miss_points.float())
-                missing_points.append(torch.cat(mp, dim=0))
+                    if j == 0:  # up_lidar
+                        missing_points_up.append(miss_points.float())
+                    else:  # down_lidar
+                        missing_points_down.append(miss_points.float())
+        if self.config.output_lidars_separately:
+            if self.config.add_missing_points:
+                point_clouds_up = [torch.cat([pc, mp], dim=0) for pc, mp in zip(point_clouds_up, missing_points_up)]
+                point_clouds_down = [
+                    torch.cat([pc, mp], dim=0) for pc, mp in zip(point_clouds_down, missing_points_down)
+                ]
+            point_clouds = point_clouds_up + point_clouds_down
+        else:
+            # transform all points to common lidar frame (up_lidar)
+            point_clouds = [
+                torch.cat([pc_up, transform_points(pc_down, down2up.unsqueeze(0).to(pc_down))], dim=0)
+                for pc_up, pc_down in zip(point_clouds_up, point_clouds_down)
+            ]
+            if self.config.add_missing_points:
+                missing_points = [
+                    torch.cat([mp_up, mp_down], dim=0) for mp_up, mp_down in zip(missing_points_up, missing_points_down)
+                ]
+                point_clouds = [torch.cat([pc, mp], dim=0) for pc, mp in zip(point_clouds, missing_points)]
 
-        # transform all points to common lidar frame (up_lidar)
-        point_clouds = [
-            torch.cat([pc_up, transform_points(pc_down, down2up.unsqueeze(0).to(pc_down))], dim=0)
-            for pc_up, pc_down in zip(point_clouds_up, point_clouds_down)
-        ]
-        if self.config.add_missing_points:
-            point_clouds = [torch.cat([pc, mp], dim=0) for pc, mp in zip(point_clouds, missing_points)]
         point_clouds = [pc.float() for pc in point_clouds]
 
         lidars.lidar_to_worlds = lidars.lidar_to_worlds.float()
+        assert len(lidars) == len(point_clouds)
         if lidars.metadata:
             del lidars.metadata["down2up"]  # we dont need this anymore
             del lidars.metadata["poses_down"]  # we dont need this anymore
