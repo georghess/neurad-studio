@@ -938,7 +938,9 @@ class Cameras(TensorDataclass):
         ):
             cam_idx = camera_indices.squeeze(-1)
             duration = self.metadata["rolling_shutter_time"][cam_idx]
-            if "rs_direction" in metadata and metadata["rs_direction"] == "Horizontal" or metadata["rs_direction"] == "Horizontal_reversed":
+            if "rs_direction" in metadata and (
+                metadata["rs_direction"] == "Horizontal" or metadata["rs_direction"] == "Horizontal_reversed"
+            ):
                 # wod (LEFT_TO_RIGHT or RIGHT_TO_LEFT)
                 width, cols = self.width[cam_idx], coords[..., 1:2]
                 time_offsets = (cols / width - 0.5) * duration + self.metadata["time_to_center_pixel"][cam_idx]
