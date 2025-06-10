@@ -39,8 +39,8 @@ from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.models.lidar_nerfacto import LidarNerfactoModelConfig
 from nerfstudio.models.nerfacto import NerfactoModelConfig
 from nerfstudio.models.neurad import NeuRADModelConfig
-from nerfstudio.models.splatfacto import SplatfactoModelConfig
 from nerfstudio.models.splatad import SplatADModelConfig
+from nerfstudio.models.splatfacto import SplatfactoModelConfig
 from nerfstudio.pipelines.ad_pipeline import ADPipelineConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
 from nerfstudio.pipelines.splatad_pipeline import SplatADPipelineConfig
@@ -345,7 +345,7 @@ method_configs["splatad"] = TrainerConfig(
             "scheduler": None,
         },
         "features_rest": {
-            "optimizer": AdamOptimizerConfig(lr=0.0025, eps=1e-15), 
+            "optimizer": AdamOptimizerConfig(lr=0.0025, eps=1e-15),
             "scheduler": None,
         },
         "opacities": {

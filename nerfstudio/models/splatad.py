@@ -27,7 +27,6 @@ from typing import Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
-from gsplat.cuda_legacy._wrapper import num_sh_bases
 from pytorch_msssim import SSIM
 from torch.nn import BCEWithLogitsLoss, Parameter
 from typing_extensions import Literal
@@ -45,20 +44,17 @@ from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.data.utils.data_utils import points_in_box
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
 from nerfstudio.engine.optimizers import Optimizers
-from nerfstudio.field_components.encodings import NeRFEncoding
 from nerfstudio.field_components.mlp import MLP
 from nerfstudio.model_components.cnns import BasicBlock
-from nerfstudio.model_components.losses import L1Loss, MSELoss, VGGPerceptualLossPix2Pix
+from nerfstudio.model_components.losses import L1Loss, MSELoss
 
 # need following import for background color override
 from nerfstudio.model_components.strategy import ADDefaultStrategy, ADMCMCStrategy
 from nerfstudio.models.ad_model import ADModel, ADModelConfig
 from nerfstudio.models.splatfacto import get_viewmat, resize_image
-from nerfstudio.utils import colormaps
 from nerfstudio.utils.colors import get_color
 from nerfstudio.utils.math import chamfer_distance
 from nerfstudio.utils.poses import inverse as pose_inverse, to4x4
-from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.viewer.viewer_elements import ViewerSlider
 
 try:
@@ -117,6 +113,7 @@ def get_ray_dirs_pinhole(cameras: Cameras, width: int, height: int, c2w: torch.T
     directions = directions.view(height, width, 3)
 
     return directions
+
 
 class RGBDecoderCNN(torch.nn.Module):
     def __init__(
@@ -355,7 +352,8 @@ class SplatADModel(ADModel):
                 hidden_dim=self.config.rgb_decoder_hidden_dim,
                 kernel_size=self.config.rgb_decoder_kernel_size,
                 num_hidden_blocks=self.config.rgb_decoder_num_hidden_blocks,
-            ), disable=True # TODO: enable automatically if we don't use the viewer
+            ),
+            disable=True,  # TODO: enable automatically if we don't use the viewer
         )
 
         self.appearance_embedding = torch.nn.Embedding(num_sensors, self.config.appearance_dim)
@@ -364,7 +362,9 @@ class SplatADModel(ADModel):
         self.setup_rs_editing()
 
         self.lidar_decoder = MLP(
-            in_dim=self.config.feature_dim + self.config.appearance_dim + viewdir_dim,  # feature + appearance + view direction
+            in_dim=self.config.feature_dim
+            + self.config.appearance_dim
+            + viewdir_dim,  # feature + appearance + view direction
             layer_width=32,
             out_dim=2,  # (intensity, ray_drop)
             num_layers=3,
@@ -908,7 +908,6 @@ class SplatADModel(ADModel):
         else:
             render_mode = "RGB"
 
-
         colors = torch.cat((self.features_dc, self.features_rest), dim=-1)
 
         # rolling shutter
@@ -1163,7 +1162,7 @@ class SplatADModel(ADModel):
             absgrad=self.config.use_absgrad,
             rasterize_mode=self.config.rasterize_mode,
             channel_chunk=128,
-            eps2d=0.01718873385, 
+            eps2d=0.01718873385,
         )
         self.info["width"] = -1
         self.info["height"] = -1
@@ -1213,7 +1212,9 @@ class SplatADModel(ADModel):
         out = {
             "depth": depth_im,  # type: ignore
             "accumulation": alpha,  # type: ignore
-            "median_depth": self.info["median_depths"] + (alpha <= 0.5) * (depth_im / alpha.clamp_min(1e-10)), # add normalized expected depth where we did not reach alpha=0.5
+            "median_depth": self.info["median_depths"]
+            + (alpha <= 0.5)
+            * (depth_im / alpha.clamp_min(1e-10)),  # add normalized expected depth where we did not reach alpha=0.5
         }  # type: ignore
 
         if intensity is not None:
@@ -1385,10 +1386,7 @@ class SplatADModel(ADModel):
                 if self.config.ssim_lambda > 0
                 else 0
             )
-            loss_dict["main_loss"] = (
-                (1 - self.config.ssim_lambda) * Ll1
-                + self.config.ssim_lambda * simloss
-            )
+            loss_dict["main_loss"] = (1 - self.config.ssim_lambda) * Ll1 + self.config.ssim_lambda * simloss
 
         if self.config.mcmc_scale_reg_lambda and isinstance(self.strategy, ADMCMCStrategy):
             mcmc_scale_reg = torch.abs(torch.exp(self.scales).mean()) * self.config.mcmc_scale_reg_lambda
@@ -1414,7 +1412,7 @@ class SplatADModel(ADModel):
 
             unreduced_depth_loss = self.depth_loss(pred["depth"], gt["depth"])
             quantile = torch.quantile(unreduced_depth_loss, self.config.depth_loss_quantile_threshold)
-            quantile_mask = unreduced_depth_loss < quantile  
+            quantile_mask = unreduced_depth_loss < quantile
             loss_dict["depth_loss"] = self.config.depth_lambda * torch.mean(unreduced_depth_loss * quantile_mask)
 
             loss_dict["intensity_loss"] = self.config.intensity_lambda * self.intensity_loss(

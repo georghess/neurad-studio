@@ -22,37 +22,29 @@ from __future__ import annotations
 
 import os
 import typing
-from abc import abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
-from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, Type, Union, cast
+from typing import Dict, List, Literal, Optional, Tuple, Type
 
 import numpy as np
 import torch
 import torch.distributed as dist
 from PIL import Image
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
-from torch import nn
 from torch.cuda.amp.grad_scaler import GradScaler
-from torch.nn import Parameter
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision.transforms.functional import to_pil_image, to_tensor
 
 from nerfstudio.cameras.lidars import transform_points
-from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.data.datamanagers.base_datamanager import DataManager, DataManagerConfig, VanillaDataManager
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanager
-from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
-from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
-from nerfstudio.models.base_model import Model, ModelConfig
-from nerfstudio.utils import profiler
-from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.data.datamanagers.full_images_lidar_datamanager import FullImageLidarDatamanagerConfig
-
-
-
+from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
+from nerfstudio.models.base_model import Model, ModelConfig
+from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
+from nerfstudio.utils import profiler
 
 
 @dataclass
@@ -359,20 +351,31 @@ class SplatADPipeline(VanillaPipeline):
                 if dump_img_to_disk:
                     assert output_path is not None
                     os.makedirs(output_path / "fid" / "lidar", exist_ok=True)
-                    gt_points = batch["lidar"][batch["lidar_pts_did_return"]] # N, 5 (xyz, intensity, time_offset)
+                    gt_points = batch["lidar"][batch["lidar_pts_did_return"]]  # N, 5 (xyz, intensity, time_offset)
                     # if filter_lidar_pred_and_gt is a function of the model, call it here
                     if hasattr(self.model, "filter_lidar_pred_and_gt"):
-                        lidar_pred, lidar_gt = self.model.filter_lidar_pred_and_gt(outputs, batch, output_point_cloud=True)
-                        pred_points = lidar_pred["point_cloud"] # M, 3
+                        lidar_pred, lidar_gt = self.model.filter_lidar_pred_and_gt(
+                            outputs, batch, output_point_cloud=True
+                        )
+                        pred_points = lidar_pred["point_cloud"]  # M, 3
                         pred_points_median = lidar_pred["median_point_cloud"]
                         pred_points_mask = (lidar_pred["ray_drop"].sigmoid() <= 0.5) * lidar_gt["valid"]
                         intensity = outputs["intensity"].flatten()[pred_points_mask]
-                        time_offset = batch["raster_pts"][...,3].flatten()[pred_points_mask]
-                        pred_points = torch.cat([pred_points, intensity[..., None], time_offset[..., None]], dim=-1) # M, 5 (xyz, intensity, time_offset)
-                        pred_points_median = torch.cat([pred_points_median, intensity[..., None], time_offset[..., None]], dim=-1) # M, 5 (xyz, intensity, time_offset)
+                        time_offset = batch["raster_pts"][..., 3].flatten()[pred_points_mask]
+                        pred_points = torch.cat(
+                            [pred_points, intensity[..., None], time_offset[..., None]], dim=-1
+                        )  # M, 5 (xyz, intensity, time_offset)
+                        pred_points_median = torch.cat(
+                            [pred_points_median, intensity[..., None], time_offset[..., None]], dim=-1
+                        )  # M, 5 (xyz, intensity, time_offset)
 
                         # save the pred_points and gt_points to a file
-                        np.savez(output_path / "fid" / "lidar" / f'points_{str(lidar.metadata["cam_idx"]).zfill(6)}.npz', pred_points=pred_points.cpu().numpy(), pred_points_median=pred_points_median.cpu().numpy(), gt_points=gt_points.cpu().numpy())
+                        np.savez(
+                            output_path / "fid" / "lidar" / f"points_{str(lidar.metadata['cam_idx']).zfill(6)}.npz",
+                            pred_points=pred_points.cpu().numpy(),
+                            pred_points_median=pred_points_median.cpu().numpy(),
+                            gt_points=gt_points.cpu().numpy(),
+                        )
                 progress.advance(task)
 
         # average the metrics list

@@ -22,9 +22,9 @@ Gaussian Splatting implementation that combines many recent advancements.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple, Type, Union
-import warnings
 
 import numpy as np
 import torch
@@ -127,7 +127,7 @@ def resize_image(image: torch.Tensor, d: int):
     return tf.conv2d(image.permute(2, 0, 1)[:, None, ...], weight, stride=d).squeeze(1).permute(1, 2, 0)
 
 
-@torch.compile(disable=True) # TODO: compile seems to give incorrect results
+@torch.compile(disable=True)  # TODO: compile seems to give incorrect results
 def get_viewmat(optimized_camera_to_world):
     """
     function that converts c2w to gsplat world2camera matrix, using compile for some speed
@@ -650,9 +650,9 @@ class SplatfactoModel(Model):
         metrics_dict = {}
         predicted_rgb = outputs["rgb"]
         if not gt_rgb.shape[:2] == predicted_rgb.shape[:2]:
-                gt_rgb = gt_rgb[: predicted_rgb.shape[0], : predicted_rgb.shape[1], :]
-                # raise user warning
-                warnings.warn("GT image and predicted image have different shapes. Cropping GT image to match.")
+            gt_rgb = gt_rgb[: predicted_rgb.shape[0], : predicted_rgb.shape[1], :]
+            # raise user warning
+            warnings.warn("GT image and predicted image have different shapes. Cropping GT image to match.")
         metrics_dict["psnr"] = self.psnr(predicted_rgb, gt_rgb)
 
         metrics_dict["gaussian_count"] = self.num_points
@@ -671,9 +671,9 @@ class SplatfactoModel(Model):
         gt_img = self.composite_with_background(self.get_gt_img(batch["image"]), outputs["background"])
         pred_img = outputs["rgb"]
         if not gt_img.shape[:2] == pred_img.shape[:2]:
-                gt_img = gt_img[: pred_img.shape[0], : pred_img.shape[1], :]
-                # raise user warning
-                warnings.warn("GT image and predicted image have different shapes. Cropping GT image to match.")
+            gt_img = gt_img[: pred_img.shape[0], : pred_img.shape[1], :]
+            # raise user warning
+            warnings.warn("GT image and predicted image have different shapes. Cropping GT image to match.")
 
         # Set masked part of both ground-truth and rendered image to black.
         # This is a little bit sketchy for the SSIM loss.
