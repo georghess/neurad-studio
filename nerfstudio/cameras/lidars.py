@@ -223,7 +223,7 @@ class Lidars(TensorDataclass):
             raise ValueError(f"times must be None or a tensor, got {type(times)}")
 
         return times
-    
+
     def _init_get_azimuths(self, azimuths: Union[None, torch.Tensor]) -> Union[None, torch.Tensor]:
         if azimuths is None:
             azimuths = None
@@ -554,7 +554,7 @@ def transform_points_pairwise(points, transforms, with_translation=True):
     # return: (*, 3)
     rotations = transforms[..., :3, :3]
     translations = transforms[..., :3, 3]
-    
+
     # Perform batch matrix multiplication
     rotated_points = torch.bmm(rotations.reshape(-1, 3, 3), points.reshape(-1, 3, 1)).reshape(*points.shape[:-1], 3)
 
@@ -586,6 +586,7 @@ def intensity_to_rgb(intensities: np.ndarray) -> np.ndarray:  # N -> N x 3
     # use log-scale for better visualization
     log_intensities = np.log(1 + intensities * 255) / np.log(256)
     return plt.cm.inferno(log_intensities)[:, :3]
+
 
 def get_lidar_elevation_mapping(lidar_type: LidarType) -> dict:
     if lidar_type == LidarType.VELODYNE16:

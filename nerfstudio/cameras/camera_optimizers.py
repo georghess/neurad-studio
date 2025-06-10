@@ -85,6 +85,7 @@ class CameraOptimizerConfig(InstantiateConfig):
             )
             warnings.warn("above message coming from", FutureWarning, stacklevel=3)
 
+
 @dataclass
 class CameraVelocityOptimizerConfig(InstantiateConfig):
     """Configuration of optimization for camera velocities."""
@@ -102,6 +103,7 @@ class CameraVelocityOptimizerConfig(InstantiateConfig):
 
     angular_l2_penalty: float = 1e-5
     """L2 penalty on angular velocity"""
+
 
 class CameraOptimizer(nn.Module):
     """Layer that modifies camera poses to be optimized as well as the field during training."""
@@ -235,6 +237,7 @@ class CameraOptimizer(nn.Module):
             param_groups["camera_opt"] = camera_opt_params
         else:
             assert len(camera_opt_params) == 0
+
 
 class CameraVelocityOptimizer(nn.Module):
     """Layer that modifies camera velocities during training."""

@@ -407,7 +407,7 @@ class VanillaPipeline(Pipeline):
                     raise NotImplementedError("Saving images is not implemented yet")
 
                 assert "num_rays_per_sec" not in metrics_dict
-                metrics_dict["num_rays_per_sec"] = (num_rays / (inference_time_camera))
+                metrics_dict["num_rays_per_sec"] = num_rays / (inference_time_camera)
                 fps_str = "fps"
                 assert fps_str not in metrics_dict
                 metrics_dict[fps_str] = (metrics_dict["num_rays_per_sec"] / (height * width)).item()

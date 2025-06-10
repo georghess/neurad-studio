@@ -102,6 +102,7 @@ class DynamicActors(nn.Module):
             step=0.1,
             cb_hook=lambda obj: self.actor_editing.update({"height": obj.value}),
         )
+
     def actor_bounds(self):
         return self.actor_sizes / 2 + self.actor_padding
 
@@ -196,15 +197,29 @@ class DynamicActors(nn.Module):
             else:
                 actor_should_be_edited = torch.ones_like(indices, dtype=torch.bool)
 
-            if abs(self.actor_editing["longitudinal"]) > 0.0 or abs(self.actor_editing["lateral"]) > 0.0 or abs(self.actor_editing["height"]) > 0.0:
+            if (
+                abs(self.actor_editing["longitudinal"]) > 0.0
+                or abs(self.actor_editing["lateral"]) > 0.0
+                or abs(self.actor_editing["height"]) > 0.0
+            ):
                 if flattened_actor_indices is not None:
                     boxes2world[actor_should_be_edited, :, 3] = boxes2world[actor_should_be_edited] @ torch.tensor(
-                        [self.actor_editing["lateral"], self.actor_editing["longitudinal"], self.actor_editing["height"], 1.0],
+                        [
+                            self.actor_editing["lateral"],
+                            self.actor_editing["longitudinal"],
+                            self.actor_editing["height"],
+                            1.0,
+                        ],
                         device=boxes2world.device,
                     )
                 else:
                     boxes2world[:, indices, :, 3] = boxes2world[:, indices] @ torch.tensor(
-                        [self.actor_editing["lateral"], self.actor_editing["longitudinal"], self.actor_editing["height"], 1.0],
+                        [
+                            self.actor_editing["lateral"],
+                            self.actor_editing["longitudinal"],
+                            self.actor_editing["height"],
+                            1.0,
+                        ],
                         device=boxes2world.device,
                     )
 
