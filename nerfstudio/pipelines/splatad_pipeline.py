@@ -1,5 +1,6 @@
 # Copyright 2025 the authors of NeuRAD and contributors.
 # Copyright 2024 the authors of NeuRAD and contributors.
+# Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,107 +14,170 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
+"""
+Abstracts for the Pipeline class.
+"""
+
+from __future__ import annotations
+
 import os
+import typing
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import time
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Literal, Optional, Tuple, Type
 
+import numpy as np
 import torch
+import torch.distributed as dist
 from PIL import Image
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
+from torch.cuda.amp.grad_scaler import GradScaler
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision.transforms.functional import to_pil_image, to_tensor
 
-from nerfstudio.data.datamanagers.ad_datamanager import ADDataManager, ADDataManagerConfig
-from nerfstudio.data.datamanagers.base_datamanager import VanillaDataManager
+from nerfstudio.cameras.lidars import transform_points
+from nerfstudio.data.datamanagers.base_datamanager import DataManager, DataManagerConfig, VanillaDataManager
+from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanager
+from nerfstudio.data.datamanagers.full_images_lidar_datamanager import FullImageLidarDatamanagerConfig
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManager
-from nerfstudio.models.ad_model import ADModel, ADModelConfig
+from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipeline, VanillaPipelineConfig
 from nerfstudio.utils import profiler
 
 
 @dataclass
-class ADPipelineConfig(VanillaPipelineConfig):
+class SplatADPipelineConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
 
-    _target: Type = field(default_factory=lambda: ADPipeline)
+    _target: Type = field(default_factory=lambda: SplatADPipeline)
     """target class to instantiate"""
-    datamanager: ADDataManagerConfig = field(default_factory=ADDataManagerConfig)
+    datamanager: DataManagerConfig = field(default_factory=FullImageLidarDatamanagerConfig)
     """specifies the datamanager config"""
-    model: ADModelConfig = field(default_factory=ADModelConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
     """specifies the model config"""
-    calc_fid_steps: Tuple[int, ...] = (20000,)  # NOTE: must also be an eval step for this to work
-    """Whether to calculate FID for lane shifted images."""
-    ray_patch_size: Tuple[int, int] = (32, 32)
-    """Size of the ray patches to sample from the image during training (for camera rays only)."""
-
-    def __post_init__(self) -> None:
-        assert self.ray_patch_size[0] == self.ray_patch_size[1], "Non-square patches are not supported yet, sorry."
-        self.datamanager.image_divisible_by = self.model.rgb_upsample_factor
+    calc_fid_steps: Tuple[int, ...] = (99999999,)  # NOTE: must also be an eval step for this to work
 
 
-class ADPipeline(VanillaPipeline):
-    """Pipeline for training AD models."""
+class SplatADPipeline(VanillaPipeline):
+    """The pipeline class for the vanilla nerf setup of multiple cameras for one or a few scenes.
 
-    def __init__(self, config: ADPipelineConfig, **kwargs):
-        pixel_sampler = config.datamanager.pixel_sampler
-        pixel_sampler.patch_size = config.ray_patch_size[0]
-        pixel_sampler.patch_scale = config.model.rgb_upsample_factor
-        super().__init__(config, **kwargs)
+    Args:
+        config: configuration to instantiate pipeline
+        device: location to place model and data
+        test_mode:
+            'val': loads train/val datasets into memory
+            'test': loads train/test dataset into memory
+            'inference': does not load any dataset into memory
+        world_size: total number of machines available
+        local_rank: rank of current machine
+        grad_scaler: gradient scaler used in the trainer
 
-        # Fix type hints
-        self.datamanager: ADDataManager = self.datamanager
-        self.model: ADModel = self.model
-        self.config: ADPipelineConfig = self.config
+    Attributes:
+        datamanager: The data manager that will be used
+        model: The model that will be used
+    """
 
-        # Disable ray drop classification if we do not add missing points
-        if not self.datamanager.dataparser.config.add_missing_points:
-            self.model.disable_ray_drop()
+    def __init__(
+        self,
+        config: SplatADPipelineConfig,
+        device: str,
+        test_mode: Literal["test", "val", "inference"] = "val",
+        world_size: int = 1,
+        local_rank: int = 0,
+        grad_scaler: Optional[GradScaler] = None,
+    ):
+        super(VanillaPipeline, self).__init__()
+        self.config = config
+        self.test_mode = test_mode
+        self.datamanager: DataManager = config.datamanager.setup(
+            device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank
+        )
+        # TODO make cleaner
+        seed_pts = None
+        if (
+            hasattr(self.datamanager, "train_dataparser_outputs")
+            and "points3D_xyz" in self.datamanager.train_dataparser_outputs.metadata
+        ):
+            pts = self.datamanager.train_dataparser_outputs.metadata["points3D_xyz"]
+            pts_rgb = self.datamanager.train_dataparser_outputs.metadata["points3D_rgb"]
+            seed_pts = (pts, pts_rgb)
+        elif (
+            hasattr(self.datamanager, "train_dataparser_outputs")
+            and "point_clouds" in self.datamanager.train_dataparser_outputs.metadata
+            and "lidars" in self.datamanager.train_dataparser_outputs.metadata
+        ):
+            points_in_world = []
+            returning_masks = []
+            for l2w, pc in zip(
+                self.datamanager.train_dataparser_outputs.metadata["lidars"].lidar_to_worlds,
+                self.datamanager.train_dataparser_outputs.metadata["point_clouds"],
+            ):
+                returning = (
+                    pc[:, :3].norm(dim=-1)
+                    < self.datamanager.train_dataparser_outputs.metadata["lidars"].valid_lidar_distance_threshold
+                )
+                returning_masks.append(returning)
+                points_in_world.append(transform_points(pc[returning, :3], l2w))
+            points_in_world = torch.cat([pc_[:, :3] for pc_ in points_in_world], dim=0)
 
-        self.fid = None
+            if (
+                "point_clouds_times" in self.datamanager.train_dataparser_outputs.metadata
+                and self.datamanager.train_dataparser_outputs.metadata["point_clouds_times"] is not None
+            ):
+                points_in_world_times = torch.cat(
+                    [
+                        t_[r_]
+                        for t_, r_ in zip(
+                            self.datamanager.train_dataparser_outputs.metadata["point_clouds_times"], returning_masks
+                        )
+                    ]
+                )
+            else:
+                points_in_world_times = None
 
-    @profiler.time_function
-    def get_train_loss_dict(self, step: int):
-        """This function gets your training loss dict. This will be responsible for
-        getting the next batch of data from the DataManager and interfacing with the
-        Model class, feeding the data to the model's forward function.
+            if (
+                "point_clouds_rgb" in self.datamanager.train_dataparser_outputs.metadata
+                and self.datamanager.train_dataparser_outputs.metadata["point_clouds_rgb"] is not None
+            ):
+                points_in_world_rgb = torch.cat(
+                    [
+                        c_[r_]
+                        for c_, r_ in zip(
+                            self.datamanager.train_dataparser_outputs.metadata["point_clouds_rgb"], returning_masks
+                        )
+                    ]
+                )
+            else:
+                points_in_world_rgb = torch.rand_like(points_in_world) * 255
+            seed_pts = (points_in_world, points_in_world_rgb, points_in_world_times)
 
-        Args:
-            step: current iteration step to update sampler if using DDP (distributed)
-        """
-        # Regular forward pass and loss calc
-        ray_bundle, batch = self.datamanager.next_train(step)
-        model_outputs = self._model(ray_bundle, patch_size=self.config.ray_patch_size)
-        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+        self.datamanager.to(device)
+        # TODO(ethan): get rid of scene_bounds from the model
+        assert self.datamanager.train_dataset is not None, "Missing input dataset"
 
-        if (actors := self.model.dynamic_actors).config.optimize_trajectories:
-            pos_norm = (actors.actor_positions - actors.initial_positions).norm(dim=-1)
-            metrics_dict["traj_opt_translation"] = pos_norm[pos_norm > 0].mean().nan_to_num()
-            metrics_dict["traj_opt_rotation"] = (
-                (actors.actor_rotations_6d - actors.initial_rotations_6d)[pos_norm > 0].norm(dim=-1).mean().nan_to_num()
-            )
+        self._model = config.model.setup(
+            scene_box=self.datamanager.train_dataset.scene_box,
+            num_train_data=self.datamanager.get_num_train_data(),
+            metadata=self.datamanager.train_dataset.metadata,
+            device=device,
+            grad_scaler=grad_scaler,
+            seed_points=seed_pts,
+        )
+        self.model.to(device)
 
-        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
+        self.world_size = world_size
+        if world_size > 1:
+            self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
+            dist.barrier(device_ids=[local_rank])
 
-        return model_outputs, loss_dict, metrics_dict
+    def forward(self):
+        """Blank forward method
 
-    @profiler.time_function
-    def get_eval_loss_dict(self, step: int):
-        """This function gets your evaluation loss dict. It needs to get the data
-        from the DataManager and feed it to the model's forward function
-
-        Args:
-            step: current iteration step
-        """
-        self.eval()
-        ray_bundle, batch = self.datamanager.next_eval(step)
-        model_outputs = self.model(ray_bundle, patch_size=self.config.ray_patch_size)
-        metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
-        loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
-        self.train()
-        return model_outputs, loss_dict, metrics_dict
+        This is an nn.Module, and so requires a forward() method normally, although in our case
+        we do not need a forward() method"""
+        raise NotImplementedError
 
     @profiler.time_function
     def get_eval_image_metrics_and_images(self, step: int):
@@ -124,17 +188,16 @@ class ADPipeline(VanillaPipeline):
             step: current iteration step
         """
         self.eval()
-        # Image eval
         camera, batch = self.datamanager.next_eval_image(step)
         outputs = self.model.get_outputs_for_camera(camera)
         metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
         assert "num_rays" not in metrics_dict
         metrics_dict["num_rays"] = (camera.height * camera.width * camera.size).item()
 
-        # Lidar eval
         lidar, batch = self.datamanager.next_eval_lidar(step)
-        outputs, batch = self.model.get_outputs_for_lidar(lidar, batch=batch)
-        lidar_metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
+        outputs = self.model.get_lidar_outputs(lidar)
+        lidar_metrics_dict, lidar_images_dict = self.model.get_image_metrics_and_images(outputs, batch)
+        images_dict.update(lidar_images_dict)
         assert not set(lidar_metrics_dict.keys()).intersection(metrics_dict.keys())
         metrics_dict.update(lidar_metrics_dict)
 
@@ -151,7 +214,7 @@ class ADPipeline(VanillaPipeline):
     ):
         """Iterate over all the images in the eval dataset and get the average.
 
-         Args:
+        Args:
             step: current training step
             output_path: optional path to save rendered images to
             get_std: Set True if you want to return std with the mean metric.
@@ -161,7 +224,9 @@ class ADPipeline(VanillaPipeline):
         """
         self.eval()
         metrics_dict_list = []
-        assert isinstance(self.datamanager, (VanillaDataManager, ParallelDataManager))
+        num_images = len(self.datamanager.fixed_indices_eval_dataloader)
+        num_lidar = len(self.datamanager.fixed_indices_eval_lidar_dataloader)
+        assert isinstance(self.datamanager, (VanillaDataManager, ParallelDataManager, FullImageDatamanager))
         with Progress(
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
@@ -192,22 +257,21 @@ class ADPipeline(VanillaPipeline):
             if actor_fids:
                 actor_fids["true"] = FrechetInceptionDistance().to(self.device)
 
-            num_images = len(self.datamanager.fixed_indices_eval_dataloader)
             task = progress.add_task("[green]Evaluating all eval images...", total=num_images)
+
             for camera, batch in self.datamanager.fixed_indices_eval_dataloader:
                 torch.cuda.synchronize()
                 # time this the following line
                 inner_start = time()
-                # Generate images from the original rays
-                camera_ray_bundle = camera.generate_rays(camera_indices=0, keep_shape=True)
-                camera_ray_bundle.camera_indices = (
-                    torch.ones_like(camera_ray_bundle.camera_indices) * batch["image_idx"]
-                ).long()
-                outputs = self.model.get_outputs_for_camera_ray_bundle(camera_ray_bundle)
+                outputs = self.model.get_outputs_for_camera(camera=camera)
                 torch.cuda.synchronize()
                 inference_time_camera = time() - inner_start
+                height, width = camera.height, camera.width
+                num_camera_rays = height * width
                 # Compute metrics for the original image
-                metrics_dict, images_dict = self.model.get_image_metrics_and_images(outputs, batch)
+                metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
+                pred_height, pred_width = outputs["rgb"].shape[:2]
+                batch["image"] = batch["image"][:pred_height, :pred_width]
                 if dump_img_to_disk:
                     assert output_path is not None
                     os.makedirs(output_path, exist_ok=True)
@@ -217,33 +281,24 @@ class ADPipeline(VanillaPipeline):
                     gt_img = batch["image"]
                     if gt_img.max() > 1:
                         gt_img = gt_img / 255.0
+                    pred_height, pred_width = outputs["rgb"].shape[:2]
+                    gt_img = gt_img[:pred_height, :pred_width]
                     Image.fromarray((gt_img * 255).byte().cpu().numpy()).save(
-                        output_path
-                        / "fid"
-                        / "gt_rgb"
-                        / "{0:06d}.png".format(int(camera_ray_bundle.camera_indices[0, 0, 0]))
+                        output_path / "fid" / "gt_rgb" / "{0:06d}.png".format(int(camera.metadata["cam_idx"]))
                     )
                     Image.fromarray((outputs["rgb"] * 255).byte().cpu().numpy()).save(
-                        output_path
-                        / "fid"
-                        / "pred_rgb"
-                        / "{0:06d}.png".format(int(camera_ray_bundle.camera_indices[0, 0, 0]))
+                        output_path / "fid" / "pred_rgb" / "{0:06d}.png".format(int(camera.metadata["cam_idx"]))
                     )
-                if output_path is not None:
-                    camera_indices = camera_ray_bundle.camera_indices
-                    assert camera_indices is not None
-                    for key, val in images_dict.items():
-                        Image.fromarray((val * 255).byte().cpu().numpy()).save(
-                            output_path / "{0:06d}-{1}.jpg".format(int(camera_indices[0, 0, 0]), key)
-                        )
-                # Add timing stuff
+                # if output_path is not None:
+                #     raise NotImplementedError("Saving images is not implemented yet")
+
                 assert "num_camera_rays_per_sec" not in metrics_dict
-                num_camera_rays = math.prod(camera_ray_bundle.shape)
-                metrics_dict["num_camera_rays_per_sec"] = num_camera_rays / inference_time_camera
+                metrics_dict["num_camera_rays_per_sec"] = (num_camera_rays / inference_time_camera).item()
                 fps_str = "fps"
                 assert fps_str not in metrics_dict
-                metrics_dict[fps_str] = metrics_dict["num_camera_rays_per_sec"] / num_camera_rays
+                metrics_dict[fps_str] = (metrics_dict["num_camera_rays_per_sec"] / (height * width)).item()
                 metrics_dict_list.append(metrics_dict)
+
                 if lane_shift_fids:
                     if dump_img_to_disk:
                         assert output_path is not None
@@ -251,25 +306,16 @@ class ADPipeline(VanillaPipeline):
                             if shift == 0:
                                 continue
                             os.makedirs(output_path / "fid" / f"lane_shift_{shift}", exist_ok=True)
-
                     self._update_lane_shift_fid(
-                        lane_shift_fids,
-                        camera_ray_bundle,
-                        batch["image"],
-                        outputs["rgb"],
-                        dump_img_to_disk,
-                        output_path,
+                        lane_shift_fids, camera, batch["image"], outputs["rgb"], dump_img_to_disk, output_path
                     )
                 if vertical_shift_fids:
                     if dump_img_to_disk:
                         assert output_path is not None
                         for shift in vertical_shift_fids.keys():
-                            if shift == 0:
-                                continue
                             os.makedirs(output_path / "fid" / f"vertical_shift_{shift}", exist_ok=True)
-
                     self._update_vertical_shift_fid(
-                        vertical_shift_fids, camera_ray_bundle, batch["image"], dump_img_to_disk, output_path
+                        vertical_shift_fids, camera, batch["image"], dump_img_to_disk, output_path
                     )
                 if actor_fids:
                     if dump_img_to_disk:
@@ -285,24 +331,51 @@ class ADPipeline(VanillaPipeline):
                                 os.makedirs(
                                     output_path / "fid" / f"actor_shift_{edit_type}_{edit_amount}", exist_ok=True
                                 )
-
                     self._update_actor_fids(
-                        actor_fids, actor_edits, camera_ray_bundle, batch["image"], dump_img_to_disk, output_path
+                        actor_fids, actor_edits, camera, batch["image"], dump_img_to_disk, output_path
                     )
                 progress.advance(task)
-            num_lidar = len(self.datamanager.fixed_indices_eval_lidar_dataloader)
+
             task = progress.add_task("[green]Evaluating all eval point clouds...", total=num_lidar)
             for lidar, batch in self.datamanager.fixed_indices_eval_lidar_dataloader:
                 torch.cuda.synchronize()
                 inner_start = time()
-                outputs, batch = self.model.get_outputs_for_lidar(lidar, batch=batch)
+                outputs = self.model.get_lidar_outputs(lidar)
                 torch.cuda.synchronize()
                 inference_time_lidar = time() - inner_start
                 metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
-                num_lidar_rays = batch["lidar"].shape[0]
+                num_lidar_rays = (batch["raster_pts"][..., 2] > 0).sum()
                 assert "num_lidar_rays_per_sec" not in metrics_dict
-                metrics_dict["num_lidar_rays_per_sec"] = num_lidar_rays / inference_time_lidar
+                metrics_dict["num_lidar_rays_per_sec"] = (num_lidar_rays / inference_time_lidar).item()
                 metrics_dict_list.append(metrics_dict)
+                if dump_img_to_disk:
+                    assert output_path is not None
+                    os.makedirs(output_path / "fid" / "lidar", exist_ok=True)
+                    gt_points = batch["lidar"][batch["lidar_pts_did_return"]]  # N, 5 (xyz, intensity, time_offset)
+                    # if filter_lidar_pred_and_gt is a function of the model, call it here
+                    if hasattr(self.model, "filter_lidar_pred_and_gt"):
+                        lidar_pred, lidar_gt = self.model.filter_lidar_pred_and_gt(
+                            outputs, batch, output_point_cloud=True
+                        )
+                        pred_points = lidar_pred["point_cloud"]  # M, 3
+                        pred_points_median = lidar_pred["median_point_cloud"]
+                        pred_points_mask = (lidar_pred["ray_drop"].sigmoid() <= 0.5) * lidar_gt["valid"]
+                        intensity = outputs["intensity"].flatten()[pred_points_mask]
+                        time_offset = batch["raster_pts"][..., 3].flatten()[pred_points_mask]
+                        pred_points = torch.cat(
+                            [pred_points, intensity[..., None], time_offset[..., None]], dim=-1
+                        )  # M, 5 (xyz, intensity, time_offset)
+                        pred_points_median = torch.cat(
+                            [pred_points_median, intensity[..., None], time_offset[..., None]], dim=-1
+                        )  # M, 5 (xyz, intensity, time_offset)
+
+                        # save the pred_points and gt_points to a file
+                        np.savez(
+                            output_path / "fid" / "lidar" / f"points_{str(lidar.metadata['cam_idx']).zfill(6)}.npz",
+                            pred_points=pred_points.cpu().numpy(),
+                            pred_points_median=pred_points_median.cpu().numpy(),
+                            gt_points=gt_points.cpu().numpy(),
+                        )
                 progress.advance(task)
 
         # average the metrics list
@@ -325,6 +398,7 @@ class ADPipeline(VanillaPipeline):
                         torch.tensor([metrics_dict[key] for metrics_dict in metrics_dict_list if key in metrics_dict])
                     )
                 )
+
         # average the actor metrics. Note that due to the way we compute the actor metrics,
         # we need to weight them by how big portion of the image they cover.
         actor_metrics_dict = [md for md in metrics_dict_list if "actor_coverage" in md]
@@ -374,7 +448,7 @@ class ADPipeline(VanillaPipeline):
         return img
 
     def _update_lane_shift_fid(
-        self, fids: Dict[int, FrechetInceptionDistance], ray_bundle, orig_img, gen_img, dump_img_to_disk, output_path
+        self, fids: Dict[int, FrechetInceptionDistance], camera, orig_img, gen_img, dump_img_to_disk, output_path
     ):
         """Updates the FID metrics (for shifted views) for the given ray bundle and images."""
         # Update "true" FID (with hack to only compute it once)
@@ -392,7 +466,7 @@ class ADPipeline(VanillaPipeline):
         assert fids.keys() == {0, 2, 3}, "Shift amounts are hardcoded for now."
         imgs_generated = {0: gen_img}
 
-        driving_direction = ray_bundle.metadata["velocities"][0, 0, :]
+        driving_direction = camera.metadata["velocities"][0].clone()
         driving_direction = driving_direction / driving_direction.norm()
         orth_right_direction = torch.cross(
             driving_direction, torch.tensor([0.0, 0.0, 1.0], device=driving_direction.device)
@@ -400,25 +474,25 @@ class ADPipeline(VanillaPipeline):
 
         # TODO: Do we need to take z axis into account?
         shift_sign = self.datamanager.eval_lidar_dataset.metadata.get("lane_shift_sign", 1)
-        original_ray_origins = ray_bundle.origins.clone()
-        ray_bundle.origins[..., :2] += 2 * orth_right_direction[:2] * shift_sign
-        imgs_generated[2] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
-        ray_bundle.origins[..., :2] += 1 * orth_right_direction[:2] * shift_sign
-        imgs_generated[3] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
-        ray_bundle.origins = original_ray_origins
+        original_camera_to_worlds = camera.camera_to_worlds.clone()
+        camera.camera_to_worlds[0, :2, 3] += 2 * orth_right_direction[:2] * shift_sign
+        imgs_generated[2] = self.model.get_outputs_for_camera(camera)["rgb"]
+        camera.camera_to_worlds[0, :2, 3] += 1 * orth_right_direction[:2] * shift_sign
+        imgs_generated[3] = self.model.get_outputs_for_camera(camera)["rgb"]
+        camera.camera_to_worlds = original_camera_to_worlds
         for shift, img in imgs_generated.items():
             if dump_img_to_disk:
                 if shift == 0:
                     continue
                 assert output_path is not None
                 fid_output_path = output_path / "fid" / f"lane_shift_{shift}"
-                filepath = fid_output_path / "{0:06d}.png".format(int(ray_bundle.camera_indices[0, 0, 0]))
+                filepath = fid_output_path / "{0:06d}.png".format(int(camera.metadata["cam_idx"]))
                 Image.fromarray((img * 255).byte().cpu().numpy()).save(filepath)
             img = (self._downsample_img((img).permute(2, 0, 1)) * 255).unsqueeze(0).to(torch.uint8).to(self.device)
             fids[shift].update(img, real=False)
 
     def _update_vertical_shift_fid(
-        self, fids: Dict[int, FrechetInceptionDistance], ray_bundle, orig_img, dump_img_to_disk, output_path
+        self, fids: Dict[int, FrechetInceptionDistance], camera, orig_img, dump_img_to_disk, output_path
     ):
         """Updates the FID metrics (for shifted views) for the given ray bundle and images."""
         # Update "true" FID (with hack to only compute it once)
@@ -436,14 +510,15 @@ class ADPipeline(VanillaPipeline):
         assert fids.keys() == {1}, "Shift amounts are hardcoded for now."
         imgs_generated = {}
 
-        original_ray_origins = ray_bundle.origins.clone()
-        ray_bundle.origins[..., 2] += 1.0
-        imgs_generated[1] = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
-        ray_bundle.origins = original_ray_origins
+        original_camera_to_worlds = camera.camera_to_worlds.clone()
+        camera.camera_to_worlds[0, 2, 3] += 1.0
+        imgs_generated[1] = self.model.get_outputs_for_camera(camera)["rgb"]
+        camera.camera_to_worlds = original_camera_to_worlds
+
         if dump_img_to_disk:
             assert output_path is not None
             fid_output_path = output_path / "fid" / "vertical_shift_1"
-            filepath = fid_output_path / "{0:06d}.png".format(int(ray_bundle.camera_indices[0, 0, 0]))
+            filepath = fid_output_path / "{0:06d}.png".format(int(camera.metadata["cam_idx"]))
             Image.fromarray((imgs_generated[1] * 255).byte().cpu().numpy()).save(filepath)
 
         for shift, img in imgs_generated.items():
@@ -454,7 +529,7 @@ class ADPipeline(VanillaPipeline):
         self,
         fids: Dict[str, FrechetInceptionDistance],
         actor_edits: Dict[str, List[Tuple]],
-        ray_bundle,
+        camera,
         orig_img,
         dump_img_to_disk,
         output_path,
@@ -477,7 +552,7 @@ class ADPipeline(VanillaPipeline):
             for rotation, lateral in actor_edits[edit_type]:
                 self.model.dynamic_actors.actor_editing["rotation"] = rotation
                 self.model.dynamic_actors.actor_editing["lateral"] = lateral
-                prediction = self.model.get_outputs_for_camera_ray_bundle(ray_bundle)["rgb"]
+                prediction = self.model.get_outputs_for_camera(camera)["rgb"]
                 imgs.append(prediction)
                 if dump_img_to_disk:
                     assert output_path is not None
@@ -488,9 +563,8 @@ class ADPipeline(VanillaPipeline):
                     else:
                         edit_amount = mount_prefix + str(edit_amount).replace(".", "0")
                     fid_output_path = output_path / "fid" / f"actor_shift_{edit_type}_{edit_amount}"
-                    filepath = fid_output_path / "{0:06d}.png".format(int(ray_bundle.camera_indices[0, 0, 0]))
+                    filepath = fid_output_path / "{0:06d}.png".format(int(camera.metadata["cam_idx"]))
                     Image.fromarray((prediction * 255).byte().cpu().numpy()).save(filepath)
-
             imgs_generated_per_edit[edit_type] = imgs
 
         for edit_type, imgs in imgs_generated_per_edit.items():

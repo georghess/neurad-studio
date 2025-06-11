@@ -1,3 +1,4 @@
+# Copyright 2025 the authors of NeuRAD and contributors.
 # Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
@@ -13,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Data parser for NuScenes dataset"""
+
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -127,10 +129,10 @@ class NuScenesDataParserConfig(ADDataParserConfig):
 
     _target: Type = field(default_factory=lambda: NuScenes)
     """target class to instantiate"""
+    data: Path = Path("data/nuscenes")
+    """Directory specifying location of data."""
     sequence: str = "0103"
     """Name of the scene."""
-    data: Path = Path("data/nuscenes")
-    """Path to NuScenes dataset."""
     version: Literal["v1.0-mini", "v1.0-trainval"] = "v1.0-trainval"
     """Dataset version."""
     cameras: Tuple[
@@ -167,8 +169,6 @@ class NuScenesDataParserConfig(ADDataParserConfig):
     """Azimuth resolution for each lidar."""
     add_missing_points: bool = True
     """Add missing points to lidar point clouds."""
-    rolling_shutter_offsets: Tuple[float, float] = (0.0, 1 / 30.0)
-    """The time offset for the first and last line, relative to the image timestamp (seconds)."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -292,7 +292,7 @@ class NuScenes(ADDataParser):
             channel_id = pc[..., 4].astype(np.int32)
             pc[..., 4] = offsets
             # concatenate pc with channel id
-            pc = np.concatenate([pc, channel_id[:, None]], axis=-1)
+            pc = np.concatenate([pc, channel_id[:, None]], axis=-1).astype(np.float32)
             point_clouds.append(torch.from_numpy(pc))
 
         if self.config.add_missing_points:
@@ -301,7 +301,8 @@ class NuScenes(ADDataParser):
             times = lidars.times.squeeze(-1)
             missing_points = []
             for point_cloud, l2w, time in zip(point_clouds, poses, times):
-                pc = point_cloud.clone()
+                # make sure we have double for avoid overflow when adding time
+                pc = point_cloud.clone().double()
                 # absolute time
                 pc[:, 4] = pc[:, 4] + time
                 # project to world frame
@@ -316,8 +317,12 @@ class NuScenes(ADDataParser):
                 )
                 # move channel from index 5 to 3
                 pc = pc[..., [0, 1, 2, 5, 3, 4]]
+                # get missing points
+                miss_pc = self._get_missing_points(pc, interpolated_poses, "LIDAR_TOP", dist_cutoff=0.05)
+                # move channel from index 3 to 5
+                miss_pc = miss_pc[..., [0, 1, 2, 4, 5, 3]]
                 # add missing points
-                missing_points.append(self._get_missing_points(pc, interpolated_poses, "LIDAR_TOP", dist_cutoff=0.05))
+                missing_points.append(miss_pc.float())
 
             # add missing points to point clouds
             point_clouds = [torch.cat([pc, missing], dim=0) for pc, missing in zip(point_clouds, missing_points)]

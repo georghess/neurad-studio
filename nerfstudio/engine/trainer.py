@@ -65,7 +65,7 @@ class MetricTrackerConfig(InstantiateConfig):
     higher_is_better: bool = True
     """Whether a higher value of the metric is better."""
     margin: float = 0.0
-    """Margin for comparison (0.1 = 10%)"""
+    """Margin for comparison (0.1 = 10%). Set to <0 to disable margin."""
 
 
 class MetricTracker:
@@ -76,9 +76,7 @@ class MetricTracker:
         self.best, self.latest = None, None
 
     def did_degrade(self, fallback: bool = False) -> bool:
-        if self.config.metric is None:
-            return False  # no metric to track
-        if (self.latest is None) or (self.best is None):
+        if (self.latest is None) or (self.best is None) or self.config.margin < 0:
             return fallback  # we can't tell
         # apply margin to the best value (to be robust to noise in the metric)
         best = self.best * (1 + (-self.config.margin if self.config.higher_is_better else self.config.margin))
@@ -89,10 +87,10 @@ class MetricTracker:
 
     def update(self, metrics: Dict[str, float]) -> None:
         self.latest = metrics.get(self.config.metric, None) if self.config.metric else None
-        if self.latest is None:
-            return
         if isinstance(self.latest, torch.Tensor):
             self.latest = self.latest.item()
+        if self.latest is None:
+            return
         if self.best is None:
             self.best = self.latest
         elif self._is_new_better(self.best, self.latest):

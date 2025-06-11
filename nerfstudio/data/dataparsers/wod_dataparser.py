@@ -98,8 +98,10 @@ class WoDParserConfig(ADDataParserConfig):
     """Channels to skip when adding missing points."""
     lidar_azimuth_resolution: Dict[str, float] = field(default_factory=lambda: WOD_AZIMUT_RESOLUTION)
     """Azimuth resolution for each lidar."""
-    rolling_shutter_offsets: Tuple[float, float] = (-0.022, 0.022)
-    """In Waymo the image time is captured either left_2_right or right_2_left with cols."""
+    rolling_shutter_time: float = 0.044
+    """The rolling shutter time for the cameras (seconds)."""
+    time_to_center_pixel: float = 0.0
+    """The time offset for the center pixel, relative to the image timestamp (seconds)."""
     paint_points: bool = True
     """Whether to paint the points in the point cloud."""
 
@@ -124,17 +126,13 @@ class WoD(ADDataParser):
             cameras_ids=self.cameras_ids,
         )
 
-        data_out, (rolling_shutter, rolling_shutter_direction) = export_images.process()
-        rolling_shutter = round(rolling_shutter, 3)
-        rs_offfsets = (-rolling_shutter, rolling_shutter)
+        data_out, (rolling_shutter_half, rolling_shutter_direction) = export_images.process()
+        rolling_shutter = round(rolling_shutter_half * 2, 3)
 
-        # rolling shutter offset reverse when right to left
-        if rolling_shutter_direction == 4:  # RIGHT_TO_LEFT
-            rs_offfsets = (rolling_shutter, -rolling_shutter)
-
-        self.config.rolling_shutter_offsets = rs_offfsets
+        self.config.rolling_shutter_time = rolling_shutter
+        self.config.time_to_center_pixel = 0.0
         rs_direction = "Horizontal" if rolling_shutter_direction in (2, 4) else "Vertical"
-
+        rs_direction = "Horizontal_reversed" if rolling_shutter_direction == 4 else rs_direction
         img_filenames = []
         intrinsics = []
         poses = []

@@ -32,10 +32,15 @@ import nerfstudio.utils.poses as pose_utils
 from nerfstudio.cameras import camera_utils
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.data.scene_box import SceneBox
+from nerfstudio.data.utils.lidar_elevation_mappings import (
+    PANDAR64_ELEVATION_MAPPING,
+    VELODYNE_128_ELEVATION_MAPPING,
+    VELODYNE_HDL32E_ELEVATION_MAPPING,
+    VELODYNE_VLP32C_ELEVATION_MAPPING,
+)
 from nerfstudio.utils.misc import strtobool, torch_compile
 from nerfstudio.utils.tensor_dataclass import TensorDataclass
 
-# torch._dynamo.config.suppress_errors = True
 TORCH_DEVICE = Union[torch.device, str]  # pylint: disable=invalid-name
 
 HORIZONTAL_BEAM_DIVERGENCE = 3.0e-3  # radians, or meters at a distance of 1m
@@ -87,6 +92,8 @@ class Lidars(TensorDataclass):
     metadata: Optional[Dict]
     horizontal_beam_divergence: Float[Tensor, "*num_lidars 1"]
     vertical_beam_divergence: Float[Tensor, "*num_lidars 1"]
+    azimuths: Optional[Float[Tensor, "*num_lidars n_azimuth_channels 1"]]
+    elevations: Optional[Float[Tensor, "*num_lidars n_elevation_channels 1"]]
 
     def __init__(
         self,
@@ -105,6 +112,8 @@ class Lidars(TensorDataclass):
         horizontal_beam_divergence: Optional[Union[Float, Float[Tensor, "*num_lidars 1"]]] = None,
         vertical_beam_divergence: Optional[Union[Float, Float[Tensor, "*num_lidars 1"]]] = None,
         valid_lidar_distance_threshold: float = 1e3,
+        azimuths: Optional[Float[Tensor, "*num_lidars n_azimuth_channels 1"]] = None,
+        elevations: Optional[Float[Tensor, "*num_lidars n_elevation_channels 1"]] = None,
     ) -> None:
         """Initializes the Lidars object.
 
@@ -135,6 +144,8 @@ class Lidars(TensorDataclass):
         self.vertical_beam_divergence = self._init_get_beam_divergence(
             vertical_beam_divergence, VERTICAL_BEAM_DIVERGENCE
         )
+        self.azimuths = self._init_get_azimuths(azimuths)
+        self.elevations = self._init_get_elevations(elevations)
 
         self.__post_init__()  # This will do the dataclass post_init and broadcast all the tensors
 
@@ -213,6 +224,28 @@ class Lidars(TensorDataclass):
 
         return times
 
+    def _init_get_azimuths(self, azimuths: Union[None, torch.Tensor]) -> Union[None, torch.Tensor]:
+        if azimuths is None:
+            azimuths = None
+        elif isinstance(azimuths, torch.Tensor):
+            if azimuths.ndim == 0 or azimuths.shape[-1] != 1:
+                azimuths = azimuths.unsqueeze(-1).to(self.device)
+        else:
+            raise ValueError(f"azimuths must be None or a tensor, got {type(azimuths)}")
+
+        return azimuths
+
+    def _init_get_elevations(self, elevations: Union[None, torch.Tensor]) -> Union[None, torch.Tensor]:
+        if elevations is None:
+            elevations = None
+        elif isinstance(elevations, torch.Tensor):
+            if elevations.ndim == 0 or elevations.shape[-1] != 1:
+                elevations = elevations.unsqueeze(-1).to(self.device)
+        else:
+            raise ValueError(f"elevations must be None or a tensor, got {type(elevations)}")
+
+        return elevations
+
     @property
     def device(self) -> TORCH_DEVICE:
         """Returns the device that the camera is on."""
@@ -225,6 +258,16 @@ class Lidars(TensorDataclass):
         TODO: base assumption is that all lidars have different number of points
         """
         return all(self.n_points.view(-1)[0] == self.n_points)
+
+    @property
+    def width(self) -> int:
+        """Returns the width of the lidar."""
+        return self.azimuths.shape[1] if self.azimuths is not None else 0
+
+    @property
+    def height(self) -> int:
+        """Returns the height of the lidar."""
+        return self.elevations.shape[1] if self.elevations is not None else 0
 
     def generate_rays(  # pylint: disable=too-many-statements
         self,
@@ -509,14 +552,16 @@ def transform_points_pairwise(points, transforms, with_translation=True):
     # points: (*, 3)
     # transforms: (*, 4, 4)
     # return: (*, 3)
-    # points = points.clone()
     rotations = transforms[..., :3, :3]
     translations = transforms[..., :3, 3]
 
+    # Perform batch matrix multiplication
+    rotated_points = torch.bmm(rotations.reshape(-1, 3, 3), points.reshape(-1, 3, 1)).reshape(*points.shape[:-1], 3)
+
     if with_translation:
-        return (points.unsqueeze(-2) @ rotations.swapaxes(-2, -1)).squeeze(-2) + translations
+        return rotated_points + translations
     else:
-        return (points.unsqueeze(-2) @ rotations.swapaxes(-2, -1)).squeeze(-2)
+        return rotated_points
 
 
 @torch_compile(dynamic=True, mode="reduce-overhead", backend="eager")
@@ -541,3 +586,54 @@ def intensity_to_rgb(intensities: np.ndarray) -> np.ndarray:  # N -> N x 3
     # use log-scale for better visualization
     log_intensities = np.log(1 + intensities * 255) / np.log(256)
     return plt.cm.inferno(log_intensities)[:, :3]
+
+
+def get_lidar_elevation_mapping(lidar_type: LidarType) -> dict:
+    if lidar_type == LidarType.VELODYNE16:
+        raise NotImplementedError("No elevation mapping for Velodyne 16")
+    elif lidar_type == LidarType.VELODYNE_HDL32E:
+        return VELODYNE_HDL32E_ELEVATION_MAPPING
+    elif lidar_type == LidarType.VELODYNE_VLP32C:
+        return VELODYNE_VLP32C_ELEVATION_MAPPING
+    elif lidar_type == LidarType.VELODYNE64E:
+        raise NotImplementedError("No elevation mapping for Velodyne 64E")
+    elif lidar_type == LidarType.VELODYNE128:
+        return VELODYNE_128_ELEVATION_MAPPING
+    elif lidar_type == LidarType.PANDAR64:
+        return PANDAR64_ELEVATION_MAPPING
+    else:
+        raise ValueError(f"Invalid lidar type: {lidar_type}")
+
+
+def get_lidar_azimuth_resolution(lidar_type: LidarType) -> float:
+    if lidar_type == LidarType.VELODYNE16:
+        return 0.2
+    elif lidar_type == LidarType.VELODYNE_HDL32E:
+        return 1 / 3.0
+    elif lidar_type == LidarType.VELODYNE_VLP32C:
+        return 0.2
+    elif lidar_type == LidarType.VELODYNE64E:
+        return 0.09
+    elif lidar_type == LidarType.VELODYNE128:
+        return 0.2
+    elif lidar_type == LidarType.PANDAR64:
+        return 0.2
+    else:
+        raise ValueError(f"Invalid lidar type: {lidar_type}")
+
+
+def get_lidar_relovution_time(lidar_type: LidarType) -> float:
+    if lidar_type == LidarType.VELODYNE16:
+        return 0.1
+    elif lidar_type == LidarType.VELODYNE_HDL32E:
+        return 0.1
+    elif lidar_type == LidarType.VELODYNE_VLP32C:
+        return 0.1
+    elif lidar_type == LidarType.VELODYNE64E:
+        return 0.1
+    elif lidar_type == LidarType.VELODYNE128:
+        return 0.1
+    elif lidar_type == LidarType.PANDAR64:
+        return 0.1
+    else:
+        raise ValueError(f"Invalid lidar type: {lidar_type}")

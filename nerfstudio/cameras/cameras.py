@@ -1,3 +1,4 @@
+# Copyright 2025 the authors of NeuRAD and contributors.
 # Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
@@ -16,6 +17,7 @@
 """
 Camera Models
 """
+
 import base64
 import math
 from dataclasses import dataclass
@@ -23,6 +25,7 @@ from enum import Enum, auto
 from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import cv2
+import numpy as np
 import torch
 from jaxtyping import Float, Int, Shaped
 from torch import Tensor
@@ -309,12 +312,20 @@ class Cameras(TensorDataclass):
         if index is None:
             image_height = torch.max(self.image_height.view(-1)).item()
             image_width = torch.max(self.image_width.view(-1)).item()
-            image_coords = torch.meshgrid(torch.arange(image_height), torch.arange(image_width), indexing="ij")
+            image_coords = torch.meshgrid(
+                torch.arange(image_height, device=self.device),
+                torch.arange(image_width, device=self.device),
+                indexing="ij",
+            )
             image_coords = torch.stack(image_coords, dim=-1) + pixel_offset  # stored as (y, x) coordinates
         else:
             image_height = self.image_height[index].item()
             image_width = self.image_width[index].item()
-            image_coords = torch.meshgrid(torch.arange(image_height), torch.arange(image_width), indexing="ij")
+            image_coords = torch.meshgrid(
+                torch.arange(image_height, device=self.device),
+                torch.arange(image_width, device=self.device),
+                indexing="ij",
+            )
             image_coords = torch.stack(image_coords, dim=-1) + pixel_offset  # stored as (y, x) coordinates
         return image_coords
 
@@ -919,22 +930,31 @@ class Cameras(TensorDataclass):
         else:
             metadata = {"directions_norm": directions_norm[0].detach()}
 
-        if self.metadata and "rolling_shutter_offsets" in self.metadata and "velocities" in self.metadata:
+        if (
+            self.metadata
+            and "rolling_shutter_time" in self.metadata
+            and "time_to_center_pixel" in self.metadata
+            and "velocities" in self.metadata
+        ):
             cam_idx = camera_indices.squeeze(-1)
-            offsets = self.metadata["rolling_shutter_offsets"][cam_idx]
-            duration = offsets.diff()
-            if "rs_direction" in metadata and metadata["rs_direction"] == "Horizontal":
+            duration = self.metadata["rolling_shutter_time"][cam_idx]
+            if "rs_direction" in metadata and (
+                metadata["rs_direction"] == "Horizontal" or metadata["rs_direction"] == "Horizontal_reversed"
+            ):
                 # wod (LEFT_TO_RIGHT or RIGHT_TO_LEFT)
                 width, cols = self.width[cam_idx], coords[..., 1:2]
-                time_offsets = cols / width * duration + offsets[..., 0:1]
+                time_offsets = (cols / width - 0.5) * duration + self.metadata["time_to_center_pixel"][cam_idx]
+                if metadata["rs_direction"] == "Horizontal_reversed":
+                    time_offsets = -time_offsets
             else:
                 # pandaset (TOP_TO_BOTTOM)
                 heights, rows = self.height[cam_idx], coords[..., 0:1]
-                time_offsets = rows / heights * duration + offsets[..., 0:1]
+                time_offsets = (rows / heights - 0.5) * duration + self.metadata["time_to_center_pixel"][cam_idx]
 
             origins = origins + self.metadata["velocities"][cam_idx] * time_offsets
             times = times + time_offsets
-            del metadata["rolling_shutter_offsets"]  # it has served its purpose
+            del metadata["rolling_shutter_time"]  # it has served its purpose
+            del metadata["time_to_center_pixel"]  # it has served its purpose
             if "rs_direction" in metadata:
                 del metadata["rs_direction"]  # it has served its purpose
 
@@ -996,11 +1016,11 @@ class Cameras(TensorDataclass):
         Returns:
             Pinhole camera intrinsics matrices
         """
-        K = torch.zeros((*self.shape, 3, 3), dtype=torch.float32)
-        K[..., 0, 0] = self.fx.squeeze(-1)
-        K[..., 1, 1] = self.fy.squeeze(-1)
-        K[..., 0, 2] = self.cx.squeeze(-1)
-        K[..., 1, 2] = self.cy.squeeze(-1)
+        K = torch.zeros((*self.shape, 3, 3), dtype=torch.float32, device=self.device)
+        K[..., 0, 0] = self.fx
+        K[..., 1, 1] = self.fy
+        K[..., 0, 2] = self.cx
+        K[..., 1, 2] = self.cy
         K[..., 2, 2] = 1.0
         return K
 
@@ -1013,7 +1033,7 @@ class Cameras(TensorDataclass):
             scaling_factor: Scaling factor to apply to the output resolution.
         """
         if isinstance(scaling_factor, (float, int)):
-            scaling_factor = torch.tensor([scaling_factor]).to(self.device).broadcast_to((self.cx.shape))
+            scaling_factor = torch.full((1,), scaling_factor, device=self.device).broadcast_to((self.cx.shape))
         elif isinstance(scaling_factor, torch.Tensor) and scaling_factor.shape == self.shape:
             scaling_factor = scaling_factor.unsqueeze(-1)
         elif isinstance(scaling_factor, torch.Tensor) and scaling_factor.shape == (*self.shape, 1):
@@ -1029,3 +1049,163 @@ class Cameras(TensorDataclass):
         self.cy = self.cy * scaling_factor
         self.height = (self.height * scaling_factor).to(torch.int64)
         self.width = (self.width * scaling_factor).to(torch.int64)
+
+
+def undistort_image(
+    camera: Cameras, distortion_params: np.ndarray, data: dict, image: np.ndarray, K: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, Optional[torch.Tensor]]:
+    mask = None
+    if camera.camera_type.item() == CameraType.PERSPECTIVE.value:
+        distortion_params = np.array(
+            [
+                distortion_params[0],
+                distortion_params[1],
+                distortion_params[4],
+                distortion_params[5],
+                distortion_params[2],
+                distortion_params[3],
+                0,
+                0,
+            ]
+        )
+        if np.any(distortion_params):
+            newK, roi = cv2.getOptimalNewCameraMatrix(K, distortion_params, (image.shape[1], image.shape[0]), 0)
+            image = cv2.undistort(image, K, distortion_params, None, newK)  # type: ignore
+        else:
+            newK = K
+            roi = 0, 0, image.shape[1], image.shape[0]
+        # crop the image and update the intrinsics accordingly
+        x, y, w, h = roi
+        image = image[y : y + h, x : x + w]
+        if "depth_image" in data:
+            data["depth_image"] = data["depth_image"][y : y + h, x : x + w]
+        if "mask" in data:
+            mask = data["mask"].numpy()
+            mask = mask.astype(np.uint8) * 255
+            if np.any(distortion_params):
+                mask = cv2.undistort(mask, K, distortion_params, None, newK)  # type: ignore
+            mask = mask[y : y + h, x : x + w]
+            mask = torch.from_numpy(mask).bool()
+            if len(mask.shape) == 2:
+                mask = mask[:, :, None]
+        K = newK
+
+    elif camera.camera_type.item() == CameraType.FISHEYE.value:
+        distortion_params = np.array(
+            [distortion_params[0], distortion_params[1], distortion_params[2], distortion_params[3]]
+        )
+        newK = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
+            K, distortion_params, (image.shape[1], image.shape[0]), np.eye(3), balance=0
+        )
+        map1, map2 = cv2.fisheye.initUndistortRectifyMap(
+            K, distortion_params, np.eye(3), newK, (image.shape[1], image.shape[0]), cv2.CV_32FC1
+        )
+        # and then remap:
+        image = cv2.remap(image, map1, map2, interpolation=cv2.INTER_LINEAR)
+        if "mask" in data:
+            mask = data["mask"].numpy()
+            mask = mask.astype(np.uint8) * 255
+            mask = cv2.fisheye.undistortImage(mask, K, distortion_params, None, newK)
+            mask = torch.from_numpy(mask).bool()
+            if len(mask.shape) == 2:
+                mask = mask[:, :, None]
+        K = newK
+    elif camera.camera_type.item() == CameraType.FISHEYE624.value:
+        fisheye624_params = torch.cat(
+            [camera.fx, camera.fy, camera.cx, camera.cy, torch.from_numpy(distortion_params)], dim=0
+        )
+        assert fisheye624_params.shape == (16,)
+        assert (
+            "mask" not in data
+            and camera.metadata is not None
+            and "fisheye_crop_radius" in camera.metadata
+            and isinstance(camera.metadata["fisheye_crop_radius"], float)
+        )
+        fisheye_crop_radius = camera.metadata["fisheye_crop_radius"]
+
+        # Approximate the FOV of the unmasked region of the camera.
+        upper, lower, left, right = camera_utils.fisheye624_unproject_helper(
+            torch.tensor(
+                [
+                    [camera.cx, camera.cy - fisheye_crop_radius],
+                    [camera.cx, camera.cy + fisheye_crop_radius],
+                    [camera.cx - fisheye_crop_radius, camera.cy],
+                    [camera.cx + fisheye_crop_radius, camera.cy],
+                ],
+                dtype=torch.float32,
+            )[None],
+            params=fisheye624_params[None],
+        ).squeeze(dim=0)
+        fov_radians = torch.max(
+            torch.acos(torch.sum(upper * lower / torch.linalg.norm(upper) / torch.linalg.norm(lower))),
+            torch.acos(torch.sum(left * right / torch.linalg.norm(left) / torch.linalg.norm(right))),
+        )
+
+        # Heuristics to determine parameters of an undistorted image.
+        undist_h = int(fisheye_crop_radius * 2)
+        undist_w = int(fisheye_crop_radius * 2)
+        undistort_focal = undist_h / (2 * torch.tan(fov_radians / 2.0))
+        undist_K = torch.eye(3)
+        undist_K[0, 0] = undistort_focal  # fx
+        undist_K[1, 1] = undistort_focal  # fy
+        undist_K[0, 2] = (undist_w - 1) / 2.0  # cx; for a 1x1 image, center should be at (0, 0).
+        undist_K[1, 2] = (undist_h - 1) / 2.0  # cy
+
+        # Undistorted 2D coordinates -> rays -> reproject to distorted UV coordinates.
+        undist_uv_homog = torch.stack(
+            [
+                *torch.meshgrid(
+                    torch.arange(undist_w, dtype=torch.float32),
+                    torch.arange(undist_h, dtype=torch.float32),
+                ),
+                torch.ones((undist_w, undist_h), dtype=torch.float32),
+            ],
+            dim=-1,
+        )
+        assert undist_uv_homog.shape == (undist_w, undist_h, 3)
+        dist_uv = (
+            camera_utils.fisheye624_project(
+                xyz=(
+                    torch.einsum(
+                        "ij,bj->bi",
+                        torch.linalg.inv(undist_K),
+                        undist_uv_homog.reshape((undist_w * undist_h, 3)),
+                    )[None]
+                ),
+                params=fisheye624_params[None, :],
+            )
+            .reshape((undist_w, undist_h, 2))
+            .numpy()
+        )
+        map1 = dist_uv[..., 1]
+        map2 = dist_uv[..., 0]
+
+        # Use correspondence to undistort image.
+        image = cv2.remap(image, map1, map2, interpolation=cv2.INTER_LINEAR)
+
+        # Compute undistorted mask as well.
+        dist_h = camera.height.item()
+        dist_w = camera.width.item()
+        mask = np.mgrid[:dist_h, :dist_w]
+        mask[0, ...] -= dist_h // 2
+        mask[1, ...] -= dist_w // 2
+        mask = np.linalg.norm(mask, axis=0) < fisheye_crop_radius
+        mask = torch.from_numpy(
+            cv2.remap(
+                mask.astype(np.uint8) * 255,
+                map1,
+                map2,
+                interpolation=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0,
+            )
+            / 255.0
+        ).bool()[..., None]
+        if len(mask.shape) == 2:
+            mask = mask[:, :, None]
+        assert mask.shape == (undist_h, undist_w, 1)
+        K = undist_K.numpy()
+    else:
+        raise NotImplementedError("Only perspective and fisheye cameras are supported")
+
+    return K, image, mask

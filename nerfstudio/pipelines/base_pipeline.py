@@ -395,8 +395,11 @@ class VanillaPipeline(Pipeline):
             task = progress.add_task("[green]Evaluating all eval images...", total=num_images)
             for camera, batch in self.datamanager.fixed_indices_eval_dataloader:
                 # time this the following line
+                torch.cuda.synchronize()
                 inner_start = time()
                 outputs = self.model.get_outputs_for_camera(camera=camera)
+                torch.cuda.synchronize()
+                inference_time_camera = time() - inner_start
                 height, width = camera.height, camera.width
                 num_rays = height * width
                 metrics_dict, _ = self.model.get_image_metrics_and_images(outputs, batch)
@@ -404,7 +407,7 @@ class VanillaPipeline(Pipeline):
                     raise NotImplementedError("Saving images is not implemented yet")
 
                 assert "num_rays_per_sec" not in metrics_dict
-                metrics_dict["num_rays_per_sec"] = (num_rays / (time() - inner_start)).item()
+                metrics_dict["num_rays_per_sec"] = num_rays / (inference_time_camera)
                 fps_str = "fps"
                 assert fps_str not in metrics_dict
                 metrics_dict[fps_str] = (metrics_dict["num_rays_per_sec"] / (height * width)).item()

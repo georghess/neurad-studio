@@ -1,9 +1,13 @@
 <p align="center">
     <!-- project badges -->
-    <a href="https://research.zenseact.com/publications/neurad/"><img src="https://img.shields.io/badge/Project-Page-ffa"/></a>
+    <a href="https://research.zenseact.com/publications/neurad/"><img src="https://img.shields.io/badge/NeuRAD-Project-ffa"/></a>
+    <a href="https://research.zenseact.com/publications/splatad/"><img src="https://img.shields.io/badge/SplatAD-Project-ffa"/></a>
     <!-- paper badges -->
     <a href="https://arxiv.org/abs/2311.15260">
-        <img src='https://img.shields.io/badge/arXiv-Page-aff'>
+        <img src='https://img.shields.io/badge/NeuRAD-Arxiv-aff'>
+    </a>
+    <a href="https://arxiv.org/abs/2411.16816">
+        <img src='https://img.shields.io/badge/SplatAD-Arxiv-aff'>
     </a>
 </p>
 
@@ -17,7 +21,7 @@
 
 <div align="center">
 <h3 style="font-size:2.0em;">Neural Rendering for Autonomous Driving</h3>
-<h4>CVPR 2024 highlight</h4>
+<h4>CVPR 2024 highlight + CVPR 2025</h4>
 </div>
 <div align="center">
 
@@ -30,7 +34,7 @@
 
 # About
 
-This is the official code release of the CVPR 2024 [paper](https://arxiv.org/abs/2311.15260) _NeuRAD: Neural Rendering for Autonomous Driving_, building on top of [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio). Besides releasing the code for our NeuRAD model, we hope that this can lay the ground-work for research on applying neural rendering methods in autonomous driving.
+This is the official code release of the CVPR 2024 [paper](https://arxiv.org/abs/2311.15260) _NeuRAD: Neural Rendering for Autonomous Driving_ and CVPR 2025 [paper](https://arxiv.org/abs/2411.16816) _SplatAD: Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous Driving_ building on top of [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio). Besides releasing the code for NeuRAD and SplatAD, we hope that this can lay the ground-work for research on applying neural rendering methods in autonomous driving.
 
 In line with Nerfstudio's mission, this is a contributor-friendly repo with the goal of building a community where users can more easily build upon each other's contributions.
 
@@ -69,6 +73,10 @@ Do you have feature requests or want to add **your** new AD-NeRF model? Or maybe
 </a>
 </div>
 
+# News
+[June 2025] Code for [SplatAD](research.zenseact.com/publications/splatad/) is now released in neurad-studio. The code uses our custom fork of gsplat, found [here](https://github.com/carlinds/splatad), for handling rolling shutter and lidar rendering. For Apptainer users we provide [a recipe](apptainer_recipe) that lets you build an image with all the needed dependencies.
+
+
 # Quickstart
 
 The quickstart will help you get started with the NeuRAD model on a PandaSet sequence.
@@ -82,7 +90,7 @@ Our installation steps largely follow Nerfstudio, with some added dataset-specif
 
 ### Create environment
 
-NeuRAD requires `python >= 3.10`. We recommend using conda to manage dependencies. Make sure to install [Conda](https://docs.conda.io/miniconda.html) before proceeding.
+The models require `python >= 3.10`. We recommend using conda to manage dependencies. Make sure to install [Conda](https://docs.conda.io/miniconda.html) before proceeding.
 
 ```bash
 conda create --name neurad -y python=3.10
@@ -116,12 +124,16 @@ pip install waymo-open-dataset-tf-2-11-0==1.6.1
 
 We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v1.0.3/docs/quickstart/installation.md) for more installation support.
 
-### Installing NeuRAD
+### Installing neurad-studio
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
 pip install -e .
 ```
+
+### Installing kernels for SplatAD
+If you want to use [SplatAD](nerfstudio/models/splatad.py), our 3DGS-based method for camera and lidar rendering (paper [here](research.zenseact.com/publications/splatad/)), you will need to also install [our custom fork of gsplat](git@github.com:carlinds/splatad.git).
+
 
 **OR** if you want to skip all installation steps and directly start using NeuRAD, use the provided docker image or apptainer recipe:
 
@@ -129,7 +141,7 @@ pip install -e .
 
 ## 2. Training your first model!
 
-The following will train a _NeuRAD_ model, our recommended model for real world AD scenes.
+The following will train a _NeuRAD_ model. However, training _SplatAD_ instead is as easy as calling a different method name.
 
 ### Data preparation
 
@@ -141,7 +153,7 @@ The dataset is no longer hosted by Scale but can be downloaded from the provided
 Training models is done the same way as in nerfstudio, i.e.,
 
 ```bash
-# Train model
+# Train NeuRAD
 python nerfstudio/scripts/train.py neurad pandaset-data
 ```
 
@@ -156,6 +168,12 @@ Navigating to the link at the end of the terminal will load the webviewer. If yo
 <p align="center">
     <img width="800" alt="image" src="docs/_static/imgs/readme_viewer_neurad.png">
 </p>
+
+To train SplatAD instead, you simply call
+```bash
+# Train SplatAD
+python nerfstudio/scripts/train.py splatad pandaset-data
+```
 
 ### Troubleshooting
 
@@ -188,16 +206,21 @@ python nerfstudio/scripts/render.py --help
 
 ## 4. Advanced Options
 
-### Training models other than NeuRAD
+### Available models
 
-Besides NeuRAD, we will provide a reimplementation of [UniSim](https://arxiv.org/abs/2308.01898) as well. Once this is released it can be trained using
+We currently provide implementations for the following models:
+- ```splatad```: 3DGS-based. Official implementation for [SplatAD](https://research.zenseact.com/publications/splatad/). This is currently our fastest and best performing model on AD scenes.
+- ```neurad```: NeRF-based. Official implementation for [NeuRAD](https://research.zenseact.com/publications/neurad/).
+- ```unisim```: NeRF-based. This is an unofficial of [UniSim](https://openaccess.thecvf.com/content/CVPR2023/papers/Yang_UniSim_A_Neural_Closed-Loop_Sensor_Simulator_CVPR_2023_paper.pdf). Available as plugin, see [https://github.com/carlinds/unisim](https://github.com/carlinds/unisim) for more info.
+Beside NeuRAD, we also provide our 3DGS-based model SplatAD.
 
+Any of these models can be trained as described above
 ```bash
 # Train model
-python nerfstudio/scripts/train.py unisim pandaset-data
+python nerfstudio/scripts/train.py <model name> pandaset-data
 ```
 
-Further, as we build on top of nerfstudio, models such as _nerfacto_ or _splatfacto_ are available as well, see nerfstudio for details. However, note that these are made for static scenes.
+Further, as we build on top of nerfstudio, models such as ```nerfacto``` or ```splatfacto``` are available as well, see nerfstudio for details. However, note that these are made for static scenes.
 
 For a full list of included models run `python nerfstudio/scripts/train.py --help`.
 
@@ -255,12 +278,13 @@ See [our UniSim repo](https://github.com/carlinds/unisim) for reference on how t
 - Viewer improvements
     - Lidar rendering
     - Dynamic actor modifications
-- NeuRAD - SOTA neural rendering method for dynamic AD scenes
+- NeuRAD - SOTA NeRF-based rendering method for dynamic AD scenes
+- SplatAD - SOTA splatting-based rendering method for dynamic AD scenes
 
 
 # Planned Features/TODOs
 
-- [ ] 3DGS implementation supporting dynamic objects
+- [x] 3DGS implementation supporting dynamic objects
 - [x] UniSim plug-in
 - [x] Release code
 
@@ -277,16 +301,24 @@ See [our UniSim repo](https://github.com/carlinds/unisim) for reference on how t
 
 # Citation
 
-You can find our paper on [arXiv](https://arxiv.org/abs/2311.15260).
+You can find our papers for [NeuRAD](https://arxiv.org/abs/2311.15260) and [SplatAD](https://arxiv.org/abs/2411.16816) on arXiv. You can also head over to [our research blog](https://research.zenseact.com/publications) for project pages and more papers on AD.
 
 If you use this code or find our paper useful, please consider citing:
 
 ```bibtex
-@article{neurad,
-  title={NeuRAD: Neural Rendering for Autonomous Driving},
+@inproceedings{tonderski2024neurad,
+  title={{NeuRAD}: Neural rendering for autonomous driving},
   author={Tonderski, Adam and Lindstr{\"o}m, Carl and Hess, Georg and Ljungbergh, William and Svensson, Lennart and Petersson, Christoffer},
-  journal={arXiv preprint arXiv:2311.15260},
-  year={2023}
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={14895--14904},
+  year={2024}
+}
+
+@inproceedings{hess2024splatad,
+  title={{SplatAD}: Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous Driving},
+  author={Hess, Georg and Lindstr{\"o}m, Carl and Fatemi, Maryam and Petersson, Christoffer and Svensson, Lennart},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  year={2025}
 }
 ```
 

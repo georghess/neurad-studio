@@ -1,3 +1,4 @@
+# Copyright 2025 the authors of NeuRAD and contributors.
 # Copyright 2024 the authors of NeuRAD and contributors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +15,7 @@
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 import torch
 from torch import Tensor, nn
@@ -22,7 +23,7 @@ from torch import Tensor, nn
 from nerfstudio.cameras.camera_utils import matrix_to_rotation_6d, rotation_6d_to_matrix
 from nerfstudio.configs.base_config import InstantiateConfig
 from nerfstudio.utils import poses as pose_utils
-from nerfstudio.utils.poses import interpolate_trajectories_6d
+from nerfstudio.utils.poses import interpolate_trajectories_6d, interpolate_velocities
 from nerfstudio.utils.rich_utils import CONSOLE
 from nerfstudio.viewer.server.viewer_elements import ViewerSlider
 
@@ -54,6 +55,7 @@ class DynamicActors(nn.Module):
             "longitudinal": 0.0,
             "rotation": 0.0,
             "index": -1.0,
+            "height": 0.0,
         }
         self.actor_lateral_shift = ViewerSlider(
             name="Actor lateral shift (m)",
@@ -92,6 +94,15 @@ class DynamicActors(nn.Module):
         )
         self._register_load_state_dict_pre_hook(self._overwrite_shapes_hook, with_module=False)
 
+        self.actor_height_shift = ViewerSlider(
+            name="Actor height shift (m)",
+            default_value=self.actor_editing["height"],
+            min_value=-3.0,
+            max_value=3.0,
+            step=0.1,
+            cb_hook=lambda obj: self.actor_editing.update({"height": obj.value}),
+        )
+
     def actor_bounds(self):
         return self.actor_sizes / 2 + self.actor_padding
 
@@ -107,6 +118,8 @@ class DynamicActors(nn.Module):
         actor_sizes = torch.zeros((self.n_actors, 3), dtype=torch.float32)
         actor_symmetric = torch.zeros((self.n_actors,), dtype=torch.bool)
         actor_deformable = torch.zeros((self.n_actors,), dtype=torch.bool)
+        actor_vel_linear = torch.zeros((self.n_times, self.n_actors, 3), dtype=torch.float32)
+        actor_vel_angular = torch.zeros((self.n_times, self.n_actors, 3), dtype=torch.float32)
 
         for actor_index, traj in enumerate(trajectories):
             actor_sizes[actor_index] = traj["dims"]
@@ -119,6 +132,13 @@ class DynamicActors(nn.Module):
                 if time_diff[traj_time_index] < 1e-4:
                     actor_present_at_time[time_index, actor_index] = True
                     actor_poses_at_time[time_index, actor_index] = traj["poses"][traj_time_index]
+                    if "linear_velocities_global" in traj and "angular_velocities_local" in traj:
+                        actor_vel_linear[time_index, actor_index] = traj["linear_velocities_global"][
+                            traj_time_index, :3
+                        ]
+                        actor_vel_angular[time_index, actor_index] = traj["angular_velocities_local"][
+                            traj_time_index, :3
+                        ]
                 else:
                     # TODO(carlinds): Is this hack needed anymore? Don't we already do the interpolation for all
                     # timesteps in the dataparser?
@@ -146,6 +166,9 @@ class DynamicActors(nn.Module):
         self.register_buffer("initial_positions", self.actor_positions.clone())
         self.register_buffer("initial_rotations_6d", self.actor_rotations_6d.clone())
 
+        self.actor_vel_linear = nn.Parameter(actor_vel_linear)
+        self.actor_vel_angular = nn.Parameter(actor_vel_angular)
+
     def get_poses_3x4(self):
         rotations = rotation_6d_to_matrix(self.actor_rotations_6d)
         return torch.cat([rotations, self.actor_positions.unsqueeze(-1)], dim=-1)
@@ -155,29 +178,74 @@ class DynamicActors(nn.Module):
         world2boxes = pose_utils.inverse(boxes2world)
         return world2boxes, *extra
 
-    def edit_boxes2world(self, boxes2world: Tensor):
+    def edit_boxes2world(self, boxes2world: Tensor, flattened_actor_indices: Optional[Tensor] = None):
+        if (
+            abs(self.actor_editing["longitudinal"]) == 0.0
+            and abs(self.actor_editing["lateral"]) == 0.0
+            and abs(self.actor_editing["rotation"]) == 0.0
+        ):
+            return boxes2world
         with torch.no_grad():
             if self.actor_editing["index"] == -1.0:
                 indices = torch.arange(self.n_actors, device=boxes2world.device)
             else:
-                indices = torch.tensor([self.actor_editing["index"]], device=boxes2world.device, dtype=torch.int)
+                index = min(self.actor_editing["index"], self.n_actors - 1)
+                indices = torch.tensor([index], device=boxes2world.device, dtype=torch.int)
 
-            if abs(self.actor_editing["longitudinal"]) > 0.0 or abs(self.actor_editing["lateral"]) > 0.0:
-                boxes2world[:, indices, :, 3] = boxes2world[:, indices] @ torch.tensor(
-                    [self.actor_editing["lateral"], self.actor_editing["longitudinal"], 0.0, 1.0],
-                    device=boxes2world.device,
-                )
+            if flattened_actor_indices is not None:
+                actor_should_be_edited = torch.isin(flattened_actor_indices, indices)
+            else:
+                actor_should_be_edited = torch.ones_like(indices, dtype=torch.bool)
+
+            if (
+                abs(self.actor_editing["longitudinal"]) > 0.0
+                or abs(self.actor_editing["lateral"]) > 0.0
+                or abs(self.actor_editing["height"]) > 0.0
+            ):
+                if flattened_actor_indices is not None:
+                    boxes2world[actor_should_be_edited, :, 3] = boxes2world[actor_should_be_edited] @ torch.tensor(
+                        [
+                            self.actor_editing["lateral"],
+                            self.actor_editing["longitudinal"],
+                            self.actor_editing["height"],
+                            1.0,
+                        ],
+                        device=boxes2world.device,
+                    )
+                else:
+                    boxes2world[:, indices, :, 3] = boxes2world[:, indices] @ torch.tensor(
+                        [
+                            self.actor_editing["lateral"],
+                            self.actor_editing["longitudinal"],
+                            self.actor_editing["height"],
+                            1.0,
+                        ],
+                        device=boxes2world.device,
+                    )
 
             if abs(self.actor_editing["rotation"]) > 0.0:
-                rotation_yaw = torch.tensor(
-                    [
-                        [math.cos(self.actor_editing["rotation"]), -math.sin(self.actor_editing["rotation"]), 0.0],
-                        [math.sin(self.actor_editing["rotation"]), math.cos(self.actor_editing["rotation"]), 0.0],
-                        [0.0, 0.0, 1.0],
-                    ],
-                    device=boxes2world.device,
-                )
-                boxes2world[:, indices, :3, :3] = rotation_yaw @ boxes2world[:, indices, :3, :3]
+                if flattened_actor_indices is not None:
+                    rotation_yaw = torch.tensor(
+                        [
+                            [math.cos(self.actor_editing["rotation"]), -math.sin(self.actor_editing["rotation"]), 0.0],
+                            [math.sin(self.actor_editing["rotation"]), math.cos(self.actor_editing["rotation"]), 0.0],
+                            [0.0, 0.0, 1.0],
+                        ],
+                        device=boxes2world.device,
+                    )
+                    boxes2world[actor_should_be_edited, :3, :3] = (
+                        rotation_yaw @ boxes2world[actor_should_be_edited, :3, :3]
+                    )
+                else:
+                    rotation_yaw = torch.tensor(
+                        [
+                            [math.cos(self.actor_editing["rotation"]), -math.sin(self.actor_editing["rotation"]), 0.0],
+                            [math.sin(self.actor_editing["rotation"]), math.cos(self.actor_editing["rotation"]), 0.0],
+                            [0.0, 0.0, 1.0],
+                        ],
+                        device=boxes2world.device,
+                    )
+                    boxes2world[:, indices, :3, :3] = rotation_yaw @ boxes2world[:, indices, :3, :3]
         return boxes2world
 
     def get_boxes2world(self, query_times: Tensor, flatten: bool = True):
@@ -191,10 +259,20 @@ class DynamicActors(nn.Module):
         boxes2world = torch.cat([rotation_6d_to_matrix(poses[..., :6]), poses[..., 6:].unsqueeze(-1)], dim=-1)
 
         if not self.training:
-            boxes2world = self.edit_boxes2world(boxes2world)
+            if flatten:
+                boxes2world = self.edit_boxes2world(boxes2world, extra[1])
+            else:
+                boxes2world = self.edit_boxes2world(boxes2world)
 
         boxes2world = pose_utils.to4x4(boxes2world)
         return boxes2world, *extra
+
+    def get_velocities(self, query_times: Tensor):
+        return interpolate_velocities(
+            torch.cat([self.actor_vel_linear, self.actor_vel_angular], dim=-1),
+            self.unique_timestamps,
+            query_times,
+        )
 
     def requires_grad_(self, requires: bool) -> None:
         self.actor_positions.requires_grad_(requires)

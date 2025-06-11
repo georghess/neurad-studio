@@ -7,8 +7,6 @@ ARG OS_VERSION
 ARG USER_ID
 
 # metainformation
-LABEL org.opencontainers.image.version = "0.1.18"
-LABEL org.opencontainers.image.source = "https://github.com/nerfstudio-project/nerfstudio"
 LABEL org.opencontainers.image.licenses = "Apache License 2.0"
 LABEL org.opencontainers.image.base.name="docker.io/library/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${OS_VERSION}"
 
@@ -31,112 +29,40 @@ RUN apt-get update && \
     build-essential \
     cmake \
     curl \
+    wget \
     ffmpeg \
     git \
+    vim-tiny \
     libatlas-base-dev \
+    libhdf5-dev \
+    libprotobuf-dev \
+    protobuf-compiler \
     libboost-filesystem-dev \
     libboost-graph-dev \
     libboost-program-options-dev \
     libboost-system-dev \
     libboost-test-dev \
-    libhdf5-dev \
     libcgal-dev \
     libeigen3-dev \
     libflann-dev \
     libfreeimage-dev \
     libgflags-dev \
     libglew-dev \
-    libgoogle-glog-dev \
     libmetis-dev \
-    libprotobuf-dev \
     libqt5opengl5-dev \
-    libsqlite3-dev \
     libsuitesparse-dev \
-    protobuf-compiler \
     python-is-python3 \
     python3.10-dev \
     python3-pip \
     qtbase5-dev \
-    vim-tiny \
-    wget \
     && \
     rm -rf /var/lib/apt/lists/*
-
-# Install GLOG (required by ceres).
-RUN git clone --branch v0.6.0 https://github.com/google/glog.git --single-branch && \
-    cd glog && \
-    mkdir build && \
-    cd build && \
-    cmake .. && \
-    make -j `nproc` && \
-    make install && \
-    cd ../.. && \
-    rm -rf glog
-# Add glog path to LD_LIBRARY_PATH.
-ENV LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:/usr/local/lib"
-
-# Install Ceres-solver (required by colmap).
-RUN git clone --branch 2.1.0 https://ceres-solver.googlesource.com/ceres-solver.git --single-branch && \
-    cd ceres-solver && \
-    git checkout $(git describe --tags) && \
-    mkdir build && \
-    cd build && \
-    cmake .. -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF && \
-    make -j `nproc` && \
-    make install && \
-    cd ../.. && \
-    rm -rf ceres-solver
-
-# Install colmap.
-RUN git clone --branch 3.8 https://github.com/colmap/colmap.git --single-branch && \
-    cd colmap && \
-    mkdir build && \
-    cd build && \
-    cmake .. -DCUDA_ENABLED=ON \
-             -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} && \
-    make -j `nproc` && \
-    make install && \
-    cd ../.. && \
-    rm -rf colmap
 
 # Upgrade pip and install packages.
 RUN python3.10 -m pip install --no-cache-dir --upgrade pip "setuptools<70.0" pathtools promise pybind11
 SHELL ["/bin/bash", "-c"]
-# Install pytorch and submodules
-RUN CUDA_VER=${CUDA_VERSION%.*} && CUDA_VER=${CUDA_VER//./} && python3.10 -m pip install --no-cache-dir \
-    torch==2.0.1+cu${CUDA_VER} \
-    torchvision==0.15.2+cu${CUDA_VER} \
-        --extra-index-url https://download.pytorch.org/whl/cu${CUDA_VER}
-# Install tynyCUDNN (we need to set the target architectures as environment variable first).
-ENV TCNN_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}
-RUN python3.10 -m pip install --no-cache-dir git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch
-
-# Install pycolmap, required by hloc.
-RUN git clone --branch v0.4.0 --recursive https://github.com/colmap/pycolmap.git && \
-    cd pycolmap && \
-    python3.10 -m pip install --no-cache-dir . && \
-    cd ..
-
-# Install hloc 1.4 as alternative feature detector and matcher option for nerfstudio.
-RUN git clone --branch master --recursive https://github.com/cvg/Hierarchical-Localization.git && \
-    cd Hierarchical-Localization && \
-    git checkout v1.4 && \
-    python3.10 -m pip install --no-cache-dir -e . && \
-    cd ..
-
-# Install pyceres from source
-RUN git clone --branch v1.0 --recursive https://github.com/cvg/pyceres.git && \
-    cd pyceres && \
-    python3.10 -m pip install --no-cache-dir -e . && \
-    cd ..
-
-# Install pixel perfect sfm.
-RUN git clone --recursive https://github.com/cvg/pixel-perfect-sfm.git && \
-    cd pixel-perfect-sfm && \
-    git reset --hard 40f7c1339328b2a0c7cf71f76623fb848e0c0357 && \
-    git clean -df && \
-    python3.10 -m pip install --no-cache-dir -e . && \
-    cd ..
+RUN python3.10 -m pip install --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+RUN TCNN_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} python3.10 -m pip install --no-cache-dir git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch
 
 # Install waymo-open-dataset
 RUN python3.10 -m pip install --no-cache-dir waymo-open-dataset-tf-2-11-0==1.6.1
@@ -144,17 +70,22 @@ RUN python3.10 -m pip install --no-cache-dir waymo-open-dataset-tf-2-11-0==1.6.1
 # Install tzdata
 RUN python3.10 -m pip install --no-cache-dir tzdata
 
-# Copy nerfstudio folder.
-ADD . /nerfstudio
+# Change working directory
+WORKDIR /workspace
 
-# Install nerfstudio dependencies.
-RUN cd /nerfstudio && python3.10 -m pip install --no-cache-dir -e .
+RUN git clone https://github.com/georghess/neurad-studio.git
+WORKDIR /workspace/neurad-studio
+RUN export TORCH_CUDA_ARCH_LIST="$(echo "$CUDA_ARCHITECTURES" | tr ';' '\n' | awk '$0 > 70 {print substr($0,1,1)"."substr($0,2)}' | tr '\n' ' ' | sed 's/ $//')" && \ 
+    python3.10 -m pip install -e .[dev]
+WORKDIR /workspace
+
+RUN git clone --recurse-submodules https://github.com/carlinds/splatad.git
+WORKDIR /workspace/splatad
+RUN export TORCH_CUDA_ARCH_LIST="$(echo "$CUDA_ARCHITECTURES" | tr ';' '\n' | awk '$0 > 70 {print substr($0,1,1)"."substr($0,2)}' | tr '\n' ' ' | sed 's/ $//')" && \
+    BUILD_NO_CUDA=1 python3.10 -m pip install -e .[dev]
 
 # Make sure viser client is built
 RUN python -c "import viser; viser.ViserServer()"
-
-# Change working directory
-WORKDIR /workspace
 
 # Install nerfstudio cli auto completion
 RUN ns-install-cli --mode install

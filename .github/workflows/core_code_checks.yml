@@ -19,14 +19,15 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10.14'
-      - uses: actions/cache@v2
+      - uses: actions/cache@v4
         with:
           path: ${{ env.pythonLocation }}
           key: ${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}
       - name: Install dependencies
         run: |
-          pip install --upgrade --upgrade-strategy eager -e .[dev]
-          pip install waymo-open-dataset-tf-2-11-0==1.6.1
+          pip install uv
+          uv pip install --system --upgrade -e .[dev]
+          uv pip install waymo-open-dataset-tf-2-11-0==1.6.1
       - name: Check notebook cell metadata
         run: |
           python ./nerfstudio/scripts/docs/add_nb_tags.py --check

@@ -42,6 +42,9 @@ class ADModelConfig(ModelConfig):
     )
     """Config of the camera optimizer to use"""
 
+    use_camopt_in_eval: bool = False
+    """Use result of camera optimization also during evaluation. Only makes sense if trained with train_eval_split=1.0."""
+
 
 class ADModel(Model):
     """Base model for all AD models."""
@@ -90,8 +93,10 @@ class ADModel(Model):
             camera: generates raybundle
         """
         points = batch["lidar"]
+        assert isinstance(batch["lidar_idx"], int), "All lidar points are assumed to be from the same scan."
         lidar_indices = torch.zeros_like(points[:, 0:1]).long()
         ray_bundle = lidar.generate_rays(lidar_indices=lidar_indices, points=points, keep_shape=True)
+        ray_bundle.camera_indices = (torch.ones_like(points[:, 0:1]) * batch["lidar_idx"]).long()
         # TODO: Can we avoid needing to pass this from the raybundle to the batch?
         batch["is_lidar"] = ray_bundle.metadata["is_lidar"]
         batch["distance"] = ray_bundle.metadata["directions_norm"]

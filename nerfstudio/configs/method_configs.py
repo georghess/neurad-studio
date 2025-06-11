@@ -30,6 +30,7 @@ from nerfstudio.configs.base_config import LoggingConfig, ViewerConfig
 from nerfstudio.configs.external_methods import ExternalMethodDummyTrainerConfig, get_external_methods
 from nerfstudio.data.datamanagers.ad_datamanager import ADDataManagerConfig
 from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatamanagerConfig
+from nerfstudio.data.datamanagers.full_images_lidar_datamanager import FullImageLidarDatamanagerConfig
 from nerfstudio.data.datamanagers.parallel_datamanager import ParallelDataManagerConfig
 from nerfstudio.data.dataparsers.pandaset_dataparser import PandaSetDataParserConfig
 from nerfstudio.engine.optimizers import AdamOptimizerConfig, AdamWOptimizerConfig, RAdamOptimizerConfig
@@ -38,18 +39,21 @@ from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.models.lidar_nerfacto import LidarNerfactoModelConfig
 from nerfstudio.models.nerfacto import NerfactoModelConfig
 from nerfstudio.models.neurad import NeuRADModelConfig
+from nerfstudio.models.splatad import SplatADModelConfig
 from nerfstudio.models.splatfacto import SplatfactoModelConfig
 from nerfstudio.pipelines.ad_pipeline import ADPipelineConfig
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
+from nerfstudio.pipelines.splatad_pipeline import SplatADPipelineConfig
 from nerfstudio.plugins.registry import discover_methods
 
 method_configs: Dict[str, Union[TrainerConfig, ExternalMethodDummyTrainerConfig]] = {}
 descriptions = {
     "nerfacto": "Nerfstudio's default model.",
     "nerfacto-lidar": "Nerfacto with lidar supervision.",
-    "splatfacto": "Gaussian Splatting model",
+    "splatfacto": "Gaussian Splatting model for static scenes",
     "neurad": "Continuously improving version of NeuRAD.",
     "neurad-paper": "NeuRAD with settings matching the paper.",
+    "splatad": "Gaussian Splatting model for autonomous driving",
 }
 
 method_configs["nerfacto"] = TrainerConfig(
@@ -253,8 +257,8 @@ method_configs["splatfacto"] = TrainerConfig(
         },
         "quats": {"optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15), "scheduler": None},
         "camera_opt": {
-            "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-            "scheduler": ExponentialDecaySchedulerConfig(lr_final=5e-5, max_steps=30000),
+            "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=5e-7, max_steps=30000),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
@@ -276,7 +280,6 @@ method_configs["splatfacto-big"] = TrainerConfig(
         ),
         model=SplatfactoModelConfig(
             cull_alpha_thresh=0.005,
-            continue_cull_post_densification=False,
         ),
     ),
     optimizers={
@@ -307,6 +310,82 @@ method_configs["splatfacto-big"] = TrainerConfig(
         "camera_opt": {
             "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
             "scheduler": ExponentialDecaySchedulerConfig(lr_final=5e-5, max_steps=30000),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+)
+
+method_configs["splatad"] = TrainerConfig(
+    method_name="splatad",
+    steps_per_eval_image=500,
+    steps_per_eval_batch=0,
+    steps_per_save=2000,
+    steps_per_eval_all_images=2500,
+    max_num_iterations=30001,
+    mixed_precision=False,
+    pipeline=SplatADPipelineConfig(
+        calc_fid_steps=(30000,),
+        datamanager=FullImageLidarDatamanagerConfig(
+            dataparser=PandaSetDataParserConfig(add_missing_points=True),
+            cache_images_type="uint8",
+        ),
+        model=SplatADModelConfig(max_steps=30001),
+    ),
+    optimizers={
+        "means": {
+            "optimizer": AdamOptimizerConfig(lr=1.6e-4, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1.6e-6,
+                max_steps=30000,
+            ),
+        },
+        "features_dc": {
+            "optimizer": AdamOptimizerConfig(lr=0.0025, eps=1e-15),
+            "scheduler": None,
+        },
+        "features_rest": {
+            "optimizer": AdamOptimizerConfig(lr=0.0025, eps=1e-15),
+            "scheduler": None,
+        },
+        "opacities": {
+            "optimizer": AdamOptimizerConfig(lr=0.05, eps=1e-15),
+            "scheduler": None,
+        },
+        "scales": {
+            "optimizer": AdamOptimizerConfig(lr=0.005, eps=1e-15),
+            "scheduler": None,
+        },
+        "quats": {"optimizer": AdamOptimizerConfig(lr=0.001, eps=1e-15), "scheduler": None},
+        "camera_opt": {
+            "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=5e-7, max_steps=30000),
+        },
+        "camera_velocity_opt_linear": {
+            "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-6, max_steps=30000, warmup_steps=1000, lr_pre_warmup=0
+            ),
+        },
+        "camera_velocity_opt_angular": {
+            "optimizer": AdamOptimizerConfig(lr=2e-4, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-7, max_steps=30000, warmup_steps=1000, lr_pre_warmup=0
+            ),
+        },
+        "camera_velocity_opt_time_to_center_pixel": {
+            "optimizer": AdamOptimizerConfig(lr=2e-4, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(
+                lr_final=1e-7, max_steps=30000, warmup_steps=10000, lr_pre_warmup=0
+            ),
+        },
+        "trajectory_opt": {
+            "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=20001, warmup_steps=2500),
+        },
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15, weight_decay=1e-6),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-3, max_steps=20001, warmup_steps=500),
         },
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
