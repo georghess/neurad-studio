@@ -62,7 +62,7 @@ RUN apt-get update && \
 RUN python3.10 -m pip install --no-cache-dir --upgrade pip "setuptools<70.0" pathtools promise pybind11
 SHELL ["/bin/bash", "-c"]
 RUN python3.10 -m pip install --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-RUN TCNN_CUDA_ARCHITECTURES="86;80" python3.10 -m pip install --no-cache-dir git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch
+RUN TCNN_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES} python3.10 -m pip install --no-cache-dir git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch
 
 # Install waymo-open-dataset
 RUN python3.10 -m pip install --no-cache-dir waymo-open-dataset-tf-2-11-0==1.6.1
@@ -74,13 +74,15 @@ RUN python3.10 -m pip install --no-cache-dir tzdata
 WORKDIR /workspace
 
 RUN git clone https://github.com/georghess/neurad-studio.git
-RUN cd neurad-studio
-RUN python3.10 -m pip install -e .[dev]
+WORKDIR /workspace/neurad-studio
+RUN export TORCH_CUDA_ARCH_LIST="$(echo "$CUDA_ARCHITECTURES" | tr ';' '\n' | awk '$0 > 70 {print substr($0,1,1)"."substr($0,2)}' | tr '\n' ' ' | sed 's/ $//')" && \ 
+    python3.10 -m pip install -e .[dev]
+WORKDIR /workspace
 
-RUN cd /workspace
 RUN git clone --recurse-submodules https://github.com/carlinds/splatad.git
-RUN cd splatad
-RUN BUILD_NO_CUDA=1 python3.10 -m pip install -e .[dev]
+WORKDIR /workspace/splatad
+RUN export TORCH_CUDA_ARCH_LIST="$(echo "$CUDA_ARCHITECTURES" | tr ';' '\n' | awk '$0 > 70 {print substr($0,1,1)"."substr($0,2)}' | tr '\n' ' ' | sed 's/ $//')" && \
+    BUILD_NO_CUDA=1 python3.10 -m pip install -e .[dev]
 
 # Make sure viser client is built
 RUN python -c "import viser; viser.ViserServer()"
