@@ -1,14 +1,15 @@
 {
-    "name": "Neurad-Studio Dev Container",
-    "dockerComposeFile": "docker-compose.yml",
-    "service": "neurad-studio",
-    "workspaceFolder": "/workspace",
-    "shutdownAction": "stopCompose",
-    "extensions": [
-        "mutantdino.resourcemonitor",
-        "ms-azuretools.vscode-docker",
-        "nvidia.nsight-vscode-edition",
-        "ms-python.python",
-        "charliermarsh.ruff"
-    ]
+  "name": "Neurad-Studio Dev Container",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "neurad-studio",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "extensions": [
+    "mutantdino.resourcemonitor",
+    "ms-azuretools.vscode-docker",
+    "nvidia.nsight-vscode-edition",
+    "ms-python.python",
+    "charliermarsh.ruff",
+    "ms-vscode-remote.remote-containers"
+  ]
 }

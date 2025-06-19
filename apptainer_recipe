@@ -41,7 +41,7 @@ qtbase5-dev \
 rm -rf /var/lib/apt/lists/*
 
 python3.10 -m pip install --no-cache-dir --upgrade pip "setuptools<70.0" pathtools promise pybind11
-python3.10 -m pip install --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+python3.10 -m pip install --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 --index-url https://download.pytorch.org/whl/cu118
 TCNN_CUDA_ARCHITECTURES="86;80" python3.10 -m pip install --no-cache-dir git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch
 
 mkdir -p /workspace
