@@ -506,7 +506,7 @@ class Trainer:
         # possibly make the checkpoint directory
         if not self.checkpoint_dir.exists():
             self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        if self.checkpoint_saving_tracker.did_degrade(fallback=True):
+        if self.checkpoint_saving_tracker.did_degrade():
             return
         self.checkpoint_saving_tracker.reset_latest()  # we only want to save the best once
         # save the checkpoint
