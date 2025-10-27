@@ -34,7 +34,11 @@
 
 # About
 
-This is the official code release of the CVPR 2024 [paper](https://arxiv.org/abs/2311.15260) _NeuRAD: Neural Rendering for Autonomous Driving_ and CVPR 2025 [paper](https://arxiv.org/abs/2411.16816) _SplatAD: Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous Driving_ building on top of [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio). Besides releasing the code for NeuRAD and SplatAD, we hope that this can lay the ground-work for research on applying neural rendering methods in autonomous driving.
+This is the official code release of the following papers:
+- CVPR 2024 [paper](https://arxiv.org/abs/2311.15260) _NeuRAD: Neural Rendering for Autonomous Driving_
+- CVPR 2025 [paper](https://arxiv.org/abs/2411.16816) _SplatAD: Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous Driving_ (build on top of [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio)).
+
+Besides releasing the code for NeuRAD and SplatAD, we hope that this can lay the ground-work for research on applying neural rendering methods in autonomous driving.
 
 In line with Nerfstudio's mission, this is a contributor-friendly repo with the goal of building a community where users can more easily build upon each other's contributions.
 
