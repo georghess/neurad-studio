@@ -106,6 +106,11 @@ reference of common knobs.
 | `--vertical-beam-divergence` | `0.0015` | Same public default as ZOD / PandaSet |
 | `--use-capture-timestamps` | `True` | Prefer per-camera times from capture sidecar |
 | `--capture-metadata-modality` | `custom.capture_metadata` | Custom modality key for that sidecar |
+| `--camera-rows` | `sync` | `sync` = one frame per sync row; `all` = every row in each `camera.*.arrow` (dense / sweep exports) |
+
+When `--camera-rows all`, times come from the camera table timestamps (the exporter
+should write capture times there for dense logs). The capture-metadata sidecar is not
+used for timing in that mode. Lidar and boxes still follow `sync.arrow`.
 
 ### Rolling shutter
 

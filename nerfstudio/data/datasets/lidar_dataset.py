@@ -71,6 +71,14 @@ class LidarDataset(Dataset):
         if point_cloud.shape[-1] == 4:  # no time offset
             # add column of zeros
             point_cloud = torch.cat([point_cloud, torch.zeros(point_cloud.shape[0], 1)], dim=1)
+        # Subsample points when downsample_factor < 1. For dense clouds this also
+        # reduces eval-time raster overflow batches (n_batches / C), which
+        # otherwise OOM SplatAD lidar rasterization.
+        if 0.0 < self.downsample_factor < 1.0 and point_cloud.shape[0] > 1:
+            n = int(point_cloud.shape[0])
+            keep = max(1, int(n * self.downsample_factor))
+            idx = torch.linspace(0, n - 1, keep).round().long()
+            point_cloud = point_cloud[idx]
         data["lidar"] = point_cloud
 
         metadata = self.get_metadata(data)

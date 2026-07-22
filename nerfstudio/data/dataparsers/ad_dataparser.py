@@ -355,6 +355,20 @@ class ADDataParser(DataParser):
             eval_indices = eval_indices[torch.randperm(len(eval_indices))[: self.config.max_eval_frames]]
         return train_indices, eval_indices
 
+    @staticmethod
+    def _safe_sensor_dt(times: Tensor) -> Tensor:
+        """Return consecutive time deltas, guarded against zero.
+
+        With sync-indexed loading a sparser modality can be nearest-matched onto denser
+        sync rows, producing two adjacent frames with identical timestamps (dt == 0).
+        Dividing pose deltas by 0 yields NaN/inf velocities that poison rolling-shutter
+        compensation. Clamp the delta magnitude to a tiny epsilon so duplicate frames
+        (zero pose delta) yield zero velocity instead of NaN.
+        """
+        dt = times[1:] - times[:-1]
+        eps = 1e-6
+        return torch.where(dt.abs() < eps, torch.full_like(dt, eps), dt)
+
     def _add_sensor_velocities(self, cameras: Cameras, lidars: Lidars):
         """Adds the sensor velocities to the metadata."""
         assert cameras.metadata is not None and lidars.metadata is not None, "Must have metadata"
@@ -364,14 +378,13 @@ class ADDataParser(DataParser):
         for sensor_idx in cameras.metadata["sensor_idxs"].unique():
             mask = (cameras.metadata["sensor_idxs"] == sensor_idx).squeeze(-1)
             cam2worlds, times = cameras.camera_to_worlds[mask], cameras.times[mask]
-            translation_velo = (cam2worlds[1:, :3, 3] - cam2worlds[:-1, :3, 3]) / (times[1:] - times[:-1])
+            dt = self._safe_sensor_dt(times)
+            translation_velo = (cam2worlds[1:, :3, 3] - cam2worlds[:-1, :3, 3]) / dt
             next_cam = cam2worlds[1:]
             prev_cam = cam2worlds[:-1]
             next_cam_2_prev_cam = pose_utils.to4x4(pose_utils.inverse(prev_cam)) @ pose_utils.to4x4(next_cam)
-            translation_velo_cam_ref = next_cam_2_prev_cam[:, :3, 3] / (times[1:] - times[:-1])
-            angular_velo = pose_utils.rotation_difference(cam2worlds[:-1, :3, :3], cam2worlds[1:, :3, :3]) / (
-                times[1:] - times[:-1]
-            )
+            translation_velo_cam_ref = next_cam_2_prev_cam[:, :3, 3] / dt
+            angular_velo = pose_utils.rotation_difference(cam2worlds[:-1, :3, :3], cam2worlds[1:, :3, :3]) / dt
             cameras.metadata["velocities"][mask] = torch.cat((translation_velo, translation_velo[-1:]), 0)
             cameras.metadata["linear_velocities_local"][mask] = torch.cat(
                 (translation_velo_cam_ref, translation_velo_cam_ref[-1:]), 0
@@ -391,14 +404,13 @@ class ADDataParser(DataParser):
         for sensor_idx in lidars.metadata["sensor_idxs"].unique():
             mask = (lidars.metadata["sensor_idxs"] == sensor_idx).squeeze(-1)
             lidar2worlds, times = lidars.lidar_to_worlds[mask], lidars.times[mask]
-            translation_velo = (lidar2worlds[1:, :3, 3] - lidar2worlds[:-1, :3, 3]) / (times[1:] - times[:-1])
+            dt = self._safe_sensor_dt(times)
+            translation_velo = (lidar2worlds[1:, :3, 3] - lidar2worlds[:-1, :3, 3]) / dt
             next_lidar = lidar2worlds[1:]
             prev_lidar = lidar2worlds[:-1]
             next_lidar_in_prev_lidar = pose_utils.to4x4(pose_utils.inverse(prev_lidar)) @ pose_utils.to4x4(next_lidar)
-            translation_velo_lidar_ref = next_lidar_in_prev_lidar[:, :3, 3] / (times[1:] - times[:-1])
-            angular_velo = pose_utils.rotation_difference(lidar2worlds[:-1, :3, :3], lidar2worlds[1:, :3, :3]) / (
-                times[1:] - times[:-1]
-            )
+            translation_velo_lidar_ref = next_lidar_in_prev_lidar[:, :3, 3] / dt
+            angular_velo = pose_utils.rotation_difference(lidar2worlds[:-1, :3, :3], lidar2worlds[1:, :3, :3]) / dt
             lidars.metadata["velocities"][mask] = torch.cat((translation_velo, translation_velo[-1:]), 0)
             lidars.metadata["linear_velocities_local"][mask] = torch.cat(
                 (translation_velo_lidar_ref, translation_velo_lidar_ref[-1:]), 0
