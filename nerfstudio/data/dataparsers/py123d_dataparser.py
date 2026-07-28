@@ -249,15 +249,20 @@ class Py123dDataParser(ADDataParser):
             self._image_dir = Path(self._image_tmpdir.name)
 
     def _camera_row_indices(self, modality_key: str, table_num_rows: int) -> List[int]:
-        """Return camera Arrow row indices to load for one modality."""
+        """Return camera Arrow row indices to load for one modality.
+
+        Lidar-driven sync can leave null camera indices on edge rows when no
+        nearest camera match exists; skip those so dense exports still load.
+        """
         if self.config.camera_rows == "all":
             return list(range(table_num_rows))
-        return sorted(
-            {
-                int(self._sync_table.column(modality_key)[sync_row].as_py())
-                for sync_row in iter_sync_rows(self._sync_table)
-            }
-        )
+        indices: set[int] = set()
+        for sync_row in iter_sync_rows(self._sync_table):
+            raw = self._sync_table.column(modality_key)[sync_row].as_py()
+            if raw is None:
+                continue
+            indices.add(int(raw))
+        return sorted(indices)
 
     def _extract_camera_images(self) -> None:
         """Extract image payloads for the configured camera row set."""
@@ -302,10 +307,13 @@ class Py123dDataParser(ADDataParser):
             if self.config.camera_rows == "all":
                 row_iter = ((None, row_idx) for row_idx in range(table.num_rows))
             else:
-                row_iter = (
-                    (sync_row, int(self._sync_table.column(modality_key)[sync_row].as_py()))
-                    for sync_row in iter_sync_rows(self._sync_table)
-                )
+                # Skip sync rows with null camera indices (no nearest match).
+                row_iter = []
+                for sync_row in iter_sync_rows(self._sync_table):
+                    raw = self._sync_table.column(modality_key)[sync_row].as_py()
+                    if raw is None:
+                        continue
+                    row_iter.append((sync_row, int(raw)))
 
             for sync_row, row_idx in row_iter:
                 pose = pose_list_to_matrix(pose_column[row_idx].as_py())
