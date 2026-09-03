@@ -28,7 +28,7 @@ import torch.nn.functional as F
 from viser import ClientHandle, PointCloudHandle
 
 from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.cameras.lidars import intensity_to_rgb
+from nerfstudio.cameras.lidars import Lidars, intensity_to_rgb
 from nerfstudio.cameras.rays import RayBundle
 from nerfstudio.model_components.renderers import background_color_override_context
 from nerfstudio.models.splatfacto import SplatfactoModel
@@ -390,47 +390,63 @@ class LidarRenderer(threading.Thread):
 
     def _render_lidar(self):
         control_panel = self.viewer.control_panel
-        # Construct rays from lidar specifications
-        device = self.viewer.get_model().device
+        model = self.viewer.get_model()
+        device = model.device
         v_angles = torch.linspace(*np.deg2rad(control_panel.lidar_fov), control_panel.lidar_beams, device=device)
         h_angles = torch.arange(0, 2 * np.pi, np.deg2rad(control_panel.lidar_azim_res), device=device)
-        v_angles, h_angles = torch.meshgrid(v_angles, h_angles)
-        v_angles, h_angles = v_angles.flatten(), h_angles.flatten()
-        directions = torch.stack(
-            [
-                torch.cos(v_angles) * torch.cos(h_angles),
-                torch.cos(v_angles) * torch.sin(h_angles),
-                torch.sin(v_angles),
-            ],
-            dim=-1,
-        )
         origins = torch.tensor(control_panel.lidar_position, dtype=torch.float32, device=device)
-        lidar_ray_bundle = RayBundle(
-            origins=origins,
-            directions=directions,
-            pixel_area=torch.zeros_like(v_angles, dtype=torch.float32)[..., None],  # TODO: is this relevant?
-            metadata={"is_lidar": torch.ones_like(v_angles, dtype=torch.bool)[..., None]},
-            times=torch.tensor([self.viewer.control_panel.time], dtype=torch.float32, device=device),
-        )
+        times = torch.tensor([self.viewer.control_panel.time], dtype=torch.float32, device=device)
 
-        # Run model
         with self.viewer.train_lock or contextlib.nullcontext():
-            self.viewer.get_model().eval()
+            model.eval()
             with torch.no_grad():
-                outputs = self.viewer.get_model().get_outputs_for_camera_ray_bundle(lidar_ray_bundle)
-            self.viewer.get_model().train()
+                if getattr(model, "renders_lidar_by_rasterization", False):
+                    # Rasterization models (SplatAD) cannot consume a RayBundle. Hand them a Lidars on the
+                    # same azimuth/elevation grid and let get_outputs_for_lidar render it.
+                    lidar_to_world = torch.eye(4, device=device)[:3]
+                    lidar_to_world[:, 3] = origins
+                    lidar = Lidars(
+                        lidar_to_worlds=lidar_to_world[None],
+                        times=times,
+                        azimuths=h_angles[None, :, None],
+                        elevations=v_angles[None, :, None],
+                    )
+                    outputs, _ = model.get_outputs_for_lidar(lidar)
+                    valid = outputs["points_valid"].reshape(-1)
+                    points = (outputs["points"].reshape(-1, 3) + origins)[valid]
+                    depth = outputs["median_depth"].reshape(-1)[valid]
+                    intensity = outputs["intensity"].reshape(-1, 1)[valid]
+                    ray_drop_prob = outputs["ray_drop_prob"].reshape(-1)[valid] if "ray_drop_prob" in outputs else None
+                else:
+                    v_grid, h_grid = torch.meshgrid(v_angles, h_angles)
+                    v_grid, h_grid = v_grid.flatten(), h_grid.flatten()
+                    directions = torch.stack(
+                        [
+                            torch.cos(v_grid) * torch.cos(h_grid),
+                            torch.cos(v_grid) * torch.sin(h_grid),
+                            torch.sin(v_grid),
+                        ],
+                        dim=-1,
+                    )
+                    lidar_ray_bundle = RayBundle(
+                        origins=origins,
+                        directions=directions,
+                        pixel_area=torch.zeros_like(v_grid, dtype=torch.float32)[..., None],  # TODO: is this relevant?
+                        metadata={"is_lidar": torch.ones_like(v_grid, dtype=torch.bool)[..., None]},
+                        times=times,
+                    )
+                    outputs = model.get_outputs_for_camera_ray_bundle(lidar_ray_bundle)
+                    points = outputs["depth"] * directions + origins
+                    depth = outputs["depth"].squeeze(-1)
+                    intensity = outputs["intensity"]
+                    ray_drop_prob = outputs["ray_drop_prob"].squeeze(-1) if "ray_drop_prob" in outputs else None
+            model.train()
 
-        point_cloud = torch.cat(
-            [
-                outputs["depth"] * directions + origins,
-                outputs["intensity"],
-            ],
-            dim=-1,
-        )
-        if "ray_drop_prob" in outputs and control_panel.lidar_use_ray_drop:
-            point_cloud = point_cloud[outputs["ray_drop_prob"].squeeze(-1) < control_panel.lidar_ray_drop_threshold]
+        point_cloud = torch.cat([points, intensity], dim=-1)
+        if ray_drop_prob is not None and control_panel.lidar_use_ray_drop:
+            point_cloud = point_cloud[ray_drop_prob < control_panel.lidar_ray_drop_threshold]
         else:
-            point_cloud = point_cloud[outputs["depth"].squeeze(-1) < control_panel.lidar_max_dist]
+            point_cloud = point_cloud[depth < control_panel.lidar_max_dist]
         point_cloud = point_cloud.cpu().numpy()
 
         if self.rendered_pc_handle is not None:

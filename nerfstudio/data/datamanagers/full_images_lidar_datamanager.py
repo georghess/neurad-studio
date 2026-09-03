@@ -58,6 +58,25 @@ AZIM_CHANNELS_PER_TILE = 32
 ELEV_CHANNELS_PER_TILE = 8
 
 
+def get_lidar_raster_params(lidar_type: LidarType) -> Tuple[torch.Tensor, torch.Tensor, float]:
+    """Elevation tile boundaries, per-channel elevation mapping and azimuth resolution for a lidar type."""
+    elevation_mapping = get_lidar_elevation_mapping(lidar_type)
+    elevation_mapping = torch.tensor(sorted(elevation_mapping.values())).float()
+    elevation_boundaries = torch.cat(
+        [
+            elevation_mapping[0:1] - 1.0,
+            (
+                elevation_mapping[ELEV_CHANNELS_PER_TILE::ELEV_CHANNELS_PER_TILE]
+                + elevation_mapping[ELEV_CHANNELS_PER_TILE - 1 : -1 : ELEV_CHANNELS_PER_TILE]
+            )
+            / 2,
+            elevation_mapping[-1:] + 1.0,
+        ]
+    )
+    azimuth_resolution = get_lidar_azimuth_resolution(lidar_type)
+    return elevation_boundaries, elevation_mapping, azimuth_resolution
+
+
 @dataclass
 class FullImageLidarDatamanagerConfig(FullImageDatamanagerConfig):
     _target: Type = field(default_factory=lambda: FullImageLidarDatamanager)
@@ -138,8 +157,8 @@ class FullImageLidarDatamanager(FullImageDatamanager, Generic[TDataset]):
         first time this (cached) property is accessed."""
         return self._load_lidars("eval", cache_lidars_device=self.config.cache_lidars)
 
+    @staticmethod
     def _lidar_to_raster_pts(
-        self,
         point_cloud,
         lidar,
         elevation_boundaries,
@@ -235,13 +254,20 @@ class FullImageLidarDatamanager(FullImageDatamanager, Generic[TDataset]):
         return raster_pts_image
 
     def _add_metadata(self, lidar, data, num_cameras):
-        data["lidar"] = data["lidar"].to(self.device)
-        data["elevation_boundaries"] = data["elevation_boundaries"].to(self.device)
-        data["elevation_mapping"] = data["elevation_mapping"].to(self.device)
+        lidar.metadata["cam_idx"] = lidar.metadata["lidar_idx"] + num_cameras
+        self.add_raster_metadata(lidar, data, self.device)
+
+    @staticmethod
+    def add_raster_metadata(lidar, data, device):
+        """Builds raster_pts for a scan and attaches it (plus the derived masks) to data and
+        lidar.metadata. Static so SplatADModel.get_outputs_for_lidar can use it on raw dataset
+        entries that never went through the datamanager cache."""
+        data["lidar"] = data["lidar"].to(device)
+        data["elevation_boundaries"] = data["elevation_boundaries"].to(device)
+        data["elevation_mapping"] = data["elevation_mapping"].to(device)
         lidar.metadata["elevation_boundaries"] = data["elevation_boundaries"]
         lidar.metadata["azimuth_resolution"] = data["azimuth_resolution"]
-        lidar.metadata["cam_idx"] = lidar.metadata["lidar_idx"] + num_cameras
-        raster_pts_image = self._lidar_to_raster_pts(
+        raster_pts_image = FullImageLidarDatamanager._lidar_to_raster_pts(
             data["lidar"],
             lidar,
             data["elevation_boundaries"],
@@ -275,20 +301,7 @@ class FullImageLidarDatamanager(FullImageDatamanager, Generic[TDataset]):
             data = dataset.get_data(idx)
             lidar = dataset.lidars[idx : idx + 1]
             lidar_type = LidarType(lidar.lidar_type.item())
-            elevation_mapping = get_lidar_elevation_mapping(lidar_type)
-            elevation_mapping = torch.tensor(sorted(elevation_mapping.values())).float()
-            elevation_boundaries = torch.cat(
-                [
-                    elevation_mapping[0:1] - 1.0,
-                    (
-                        elevation_mapping[ELEV_CHANNELS_PER_TILE::ELEV_CHANNELS_PER_TILE]
-                        + elevation_mapping[ELEV_CHANNELS_PER_TILE - 1 : -1 : ELEV_CHANNELS_PER_TILE]
-                    )
-                    / 2,
-                    elevation_mapping[-1:] + 1.0,
-                ]
-            )
-            azimuth_resolution = get_lidar_azimuth_resolution(lidar_type)
+            elevation_boundaries, elevation_mapping, azimuth_resolution = get_lidar_raster_params(lidar_type)
             data["elevation_boundaries"] = elevation_boundaries.cpu()
             data["elevation_mapping"] = elevation_mapping.cpu()
             data["azimuth_resolution"] = azimuth_resolution

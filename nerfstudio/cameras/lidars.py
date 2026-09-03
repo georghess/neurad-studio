@@ -128,7 +128,7 @@ class Lidars(TensorDataclass):
         """
 
         # This will notify the tensordataclass that we have a field with more than 1 dimension
-        self._field_custom_dimensions = {"lidar_to_worlds": 2}
+        self._field_custom_dimensions = {"lidar_to_worlds": 2, "azimuths": 2, "elevations": 2}
 
         self.lidar_to_worlds = lidar_to_worlds
 
