@@ -1063,9 +1063,8 @@ class SplatADModel(ADModel):
             raise ValueError("Unknown rasterize_mode: %s", self.config.rasterize_mode)
 
         if lidar.metadata and "raster_pts" in lidar.metadata:
-            raster_pts = lidar.metadata["raster_pts"][
-                ..., :-1
-            ]  # omit intensity channel, only needed for metric/loss computation
+            # omit intensity channel, only needed for metric/loss computation
+            raster_pts = lidar.metadata["raster_pts"][..., :-1].to(self.device)
             tile_elevation_boundaries = lidar.metadata["elevation_boundaries"]
             min_azimuth = -180
             max_azimuth = 180
@@ -1106,7 +1105,7 @@ class SplatADModel(ADModel):
             )
             lidar_linear_vel, lidar_angular_vel = torch.split(velocities, 3, dim=-1)
 
-            time_to_center_adjustment = (max_offset + min_offset) / 2
+            time_to_center_adjustment = ((max_offset + min_offset) / 2).to(self.device)
             optimized_lidar_to_world = torch.cat(
                 [
                     optimized_lidar_to_world[:, :3, :3],
@@ -1262,10 +1261,10 @@ class SplatADModel(ADModel):
             return image
 
     def filter_lidar_pred_and_gt(self, outputs, batch, output_point_cloud=False):
-        gt_lidar = batch["raster_pts"]  # (azimuth, elev, depth, time, intensity)
-        raster_pts_valid_and_did_return = batch["raster_pts_valid_depth_and_did_return"]
-        raster_pts_did_return = batch["raster_pts_did_return"].flatten()
-        raster_pts_valid_and_did_not_return = batch["raster_pts_valid_depth_and_did_not_return"]
+        gt_lidar = batch["raster_pts"].to(self.device)  # (azimuth, elev, depth, time, intensity)
+        raster_pts_valid_and_did_return = batch["raster_pts_valid_depth_and_did_return"].to(self.device)
+        raster_pts_did_return = batch["raster_pts_did_return"].to(self.device).flatten()
+        raster_pts_valid_and_did_not_return = batch["raster_pts_valid_depth_and_did_not_return"].to(self.device)
 
         gt = {}
         gt["depth"] = gt_lidar[..., 2].flatten()[raster_pts_valid_and_did_return]
