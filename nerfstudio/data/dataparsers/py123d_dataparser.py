@@ -20,7 +20,7 @@ import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Set, Tuple, Type
+from typing import Dict, List, Literal, Set, Tuple, Type
 
 import numpy as np
 import torch
@@ -129,6 +129,16 @@ class Py123dDataParserConfig(ADDataParserConfig):
     ``{modality}.arrow`` if present and uses ``cameras[name].capture_timestamp_us``.
     Missing sidecar / camera entries fall back to the camera-table anchor timestamp.
     """
+    camera_rows: Literal["sync", "all"] = "sync"
+    """Which camera Arrow rows to load.
+
+    - ``sync`` (default): one camera frame per ``sync.arrow`` row (lidar-anchored).
+    - ``all``: every row in each ``camera.*.arrow`` file. Use with dense exports that
+      write non-keyframe / sweep frames at the camera's native rate; lidar and boxes
+      still follow ``sync.arrow``. When ``all``, times come from the camera table
+      (capture timestamps if the exporter wrote them) and the capture-metadata
+      sidecar is not consulted for timing.
+    """
 
     def __post_init__(self) -> None:
         if self.log_id:
@@ -232,20 +242,38 @@ class Py123dDataParser(ADDataParser):
 
         # Keep TemporaryDirectory alive for the parser lifetime so images remain
         # readable, then clean up automatically when the parser is discarded.
-        self._image_tmpdir = tempfile.TemporaryDirectory(prefix="py123d_images_")
-        self._image_dir = Path(self._image_tmpdir.name)
+        # Only create once: train+eval both call _generate_dataparser_outputs;
+        # replacing the TemporaryDirectory would delete the first split's files.
+        if self._image_tmpdir is None:
+            self._image_tmpdir = tempfile.TemporaryDirectory(prefix="py123d_images_")
+            self._image_dir = Path(self._image_tmpdir.name)
+
+    def _camera_row_indices(self, modality_key: str, table_num_rows: int) -> List[int]:
+        """Return camera Arrow row indices to load for one modality.
+
+        Lidar-driven sync can leave null camera indices on edge rows when no
+        nearest camera match exists; skip those so dense exports still load.
+        """
+        if self.config.camera_rows == "all":
+            return list(range(table_num_rows))
+        indices: set[int] = set()
+        for sync_row in iter_sync_rows(self._sync_table):
+            raw = self._sync_table.column(modality_key)[sync_row].as_py()
+            if raw is None:
+                continue
+            indices.add(int(raw))
+        return sorted(indices)
 
     def _extract_camera_images(self) -> None:
-        """Extract image payloads for rows referenced by ``sync.arrow``."""
+        """Extract image payloads for the configured camera row set."""
+        if self._image_paths:
+            return
         for camera_name in self.config.cameras:
             modality_key = self._camera_name_to_modality[camera_name]
             table = self._camera_tables[modality_key]
             data_column = modality_data_column(table)
-            needed_rows = {
-                int(self._sync_table.column(modality_key)[sync_row].as_py())
-                for sync_row in iter_sync_rows(self._sync_table)
-            }
-            for row_idx in sorted(needed_rows):
+            needed_rows = self._camera_row_indices(modality_key, table.num_rows)
+            for row_idx in needed_rows:
                 image_bytes = data_column[row_idx].as_py()
                 if not image_bytes:
                     raise ValueError(
@@ -266,6 +294,8 @@ class Py123dDataParser(ADDataParser):
         heights: List[int] = []
         widths: List[int] = []
 
+        use_sidecar_times = self.config.use_capture_timestamps and self.config.camera_rows == "sync"
+
         for cam_idx, camera_name in enumerate(self.config.cameras):
             modality_key = self._camera_name_to_modality[camera_name]
             metadata = self._camera_metadata[camera_name]
@@ -274,14 +304,24 @@ class Py123dDataParser(ADDataParser):
             timestamp_column = modality_timestamp_column(table)
             assert pose_column is not None
 
-            for sync_row in iter_sync_rows(self._sync_table):
-                row_idx = int(self._sync_table.column(modality_key)[sync_row].as_py())
+            if self.config.camera_rows == "all":
+                row_iter = ((None, row_idx) for row_idx in range(table.num_rows))
+            else:
+                # Skip sync rows with null camera indices (no nearest match).
+                row_iter = []
+                for sync_row in iter_sync_rows(self._sync_table):
+                    raw = self._sync_table.column(modality_key)[sync_row].as_py()
+                    if raw is None:
+                        continue
+                    row_iter.append((sync_row, int(raw)))
+
+            for sync_row, row_idx in row_iter:
                 pose = pose_list_to_matrix(pose_column[row_idx].as_py())
                 pose[:3, :3] = pose[:3, :3] @ OPENCV_TO_NERFSTUDIO
 
                 anchor_ts_us = timestamp_column[row_idx].as_py()
                 capture_ts_us = None
-                if self.config.use_capture_timestamps:
+                if use_sidecar_times:
                     capture_ts_us = get_camera_capture_timestamp_us(
                         self._capture_table,
                         self._sync_table,
