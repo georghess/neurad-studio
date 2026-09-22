@@ -1,3 +1,4 @@
+# Copyright 2026 the authors of NeuRAD and contributors.
 # Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
@@ -214,8 +215,8 @@ class Trainer:
             local_rank=self.local_rank,
             grad_scaler=self.grad_scaler,
         )
-        self._load_checkpoint()  # load checkpoint before setting up optimizers in case parameters are re-registered
-        self.optimizers = self.setup_optimizers()
+        # Checkpoints may replace Gaussian parameters; initialize and restore optimizers after loading.
+        self._load_checkpoint()
 
         # set up viewer if enabled
         viewer_log_path = self.base_dir / self.config.viewer.relative_log_filename
@@ -454,7 +455,7 @@ class Trainer:
         )
 
     def _load_checkpoint(self) -> None:
-        """Helper function to load pipeline and optimizer from prespecified checkpoint"""
+        """Load model parameters, initialize optimizers, and restore training state when requested."""
         load_dir = self.config.load_dir
         load_checkpoint = self.config.load_checkpoint
         if load_dir is not None:
@@ -472,6 +473,7 @@ class Trainer:
             self._start_step = loaded_state["step"] + 1
             # load the checkpoints for pipeline, optimizers, and gradient scalar
             self.pipeline.load_pipeline(loaded_state["pipeline"], loaded_state["step"])
+            self.optimizers = self.setup_optimizers()
             if self.config.load_optimizer:
                 self.optimizers.load_optimizers(loaded_state["optimizers"])
             if "schedulers" in loaded_state and self.config.load_scheduler:
@@ -487,6 +489,7 @@ class Trainer:
             self._start_step = loaded_state["step"] + 1
             # load the checkpoints for pipeline, optimizers, and gradient scalar
             self.pipeline.load_pipeline(loaded_state["pipeline"], loaded_state["step"])
+            self.optimizers = self.setup_optimizers()
             if self.config.load_optimizer:
                 self.optimizers.load_optimizers(loaded_state["optimizers"])
             if "schedulers" in loaded_state and self.config.load_scheduler:
@@ -495,6 +498,7 @@ class Trainer:
             CONSOLE.print(f"Done loading Nerfstudio checkpoint from {load_checkpoint}")
         else:
             CONSOLE.print("No Nerfstudio checkpoint to load, so training from scratch.")
+            self.optimizers = self.setup_optimizers()
 
     @check_main_thread
     def save_checkpoint(self, step: int) -> None:
