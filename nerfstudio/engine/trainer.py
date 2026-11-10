@@ -455,7 +455,7 @@ class Trainer:
         )
 
     def _load_checkpoint(self) -> None:
-        """Load model parameters, initialize optimizers, and restore training state when requested."""
+        """Load trusted full checkpoints, initialize optimizers, and restore training state."""
         load_dir = self.config.load_dir
         load_checkpoint = self.config.load_checkpoint
         if load_dir is not None:
@@ -466,7 +466,7 @@ class Trainer:
                 load_step = sorted(int(x[x.find("-") + 1 : x.find(".")]) for x in os.listdir(load_dir))[-1]
             load_path: Path = load_dir / f"step-{load_step:09d}.ckpt"
             assert load_path.exists(), f"Checkpoint {load_path} does not exist"
-            loaded_state = torch.load(load_path, map_location="cpu")
+            loaded_state = torch.load(load_path, map_location="cpu", weights_only=False)
             loaded_state["step"] = (
                 self.config.training_start_step if self.config.training_start_step is not None else loaded_state["step"]
             )
@@ -482,7 +482,7 @@ class Trainer:
             CONSOLE.print(f"Done loading Nerfstudio checkpoint from {load_path}")
         elif load_checkpoint is not None:
             assert load_checkpoint.exists(), f"Checkpoint {load_checkpoint} does not exist"
-            loaded_state = torch.load(load_checkpoint, map_location="cpu")
+            loaded_state = torch.load(load_checkpoint, map_location="cpu", weights_only=False)
             loaded_state["step"] = (
                 self.config.training_start_step if self.config.training_start_step is not None else loaded_state["step"]
             )

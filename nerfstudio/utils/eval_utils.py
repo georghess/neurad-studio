@@ -1,3 +1,4 @@
+# Copyright 2026 the authors of NeuRAD and contributors.
 # Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
@@ -35,7 +36,10 @@ def eval_load_checkpoint(
     config: TrainerConfig, pipeline: Pipeline, strict: bool = True, ignore_keys: List = []
 ) -> Tuple[Path, int]:
     ## TODO: ideally eventually want to get this to be the same as whatever is used to load train checkpoint too
-    """Helper function to load checkpointed pipeline
+    """Load a pipeline from a trusted full training checkpoint.
+
+    Optimizer/scheduler state can contain NumPy scalars even though evaluation
+    only uses the pipeline weights, so tensor-only deserialization is insufficient.
 
     Args:
         config (DictConfig): Configuration of pipeline to load
@@ -60,7 +64,7 @@ def eval_load_checkpoint(
         load_step = config.load_step
     load_path = config.load_dir / f"step-{load_step:09d}.ckpt"
     assert load_path.exists(), f"Checkpoint {load_path} does not exist"
-    loaded_state = torch.load(load_path, map_location="cpu")
+    loaded_state = torch.load(load_path, map_location="cpu", weights_only=False)
     for key in ignore_keys:
         loaded_state["pipeline"].pop(key, None)
 
