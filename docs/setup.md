@@ -39,6 +39,11 @@ legacy viewer (`dataclass-wizard`) and optional generative code (`huggingface-hu
 These are compatibility constraints, not a lockfile for every transitive package.
 The setup pins tiny-cuda-nn, gsplat, Viser, and PandaSet to specific revisions.
 
+Training, evaluation, and rendering explicitly load full checkpoints with
+`weights_only=False`. This preserves compatibility with optimizer/scheduler
+state containing NumPy scalars under PyTorch 2.6 and later. Only load checkpoints
+from trusted sources: this format uses Python pickle deserialization.
+
 Waymo's TensorFlow packages and py123d are separate, optional dataset installs.
 In particular, py123d 0.6.0 pins upstream `viser==1.0.24`, while this repository
 uses a custom older Viser fork. Installing py123d normally into this environment
@@ -50,6 +55,7 @@ silence that conflict; use a separate environment for py123d conversion tools.
 ```bash
 python -c 'import torch, tinycudann; print(torch.__version__, torch.cuda.get_device_name())'
 pytest tests/pipelines/test_vanilla_pipeline.py
+pytest tests/engine/test_checkpoint_serialization.py
 ```
 
 Run dataset-specific tests after installing their optional dependencies. Training
