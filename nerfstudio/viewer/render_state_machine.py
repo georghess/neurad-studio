@@ -412,11 +412,9 @@ class LidarRenderer(threading.Thread):
                         elevations=v_angles[None, :, None],
                     )
                     outputs, _ = model.get_outputs_for_lidar(lidar)
-                    valid = outputs["points_valid"].reshape(-1)
-                    points = (outputs["points"].reshape(-1, 3) + origins)[valid]
-                    depth = outputs["median_depth"].reshape(-1)[valid]
-                    intensity = outputs["intensity"].reshape(-1, 1)[valid]
-                    ray_drop_prob = outputs["ray_drop_prob"].reshape(-1)[valid] if "ray_drop_prob" in outputs else None
+                    outputs = {key: value[outputs["points_valid"]] for key, value in outputs.items()}
+                    points = outputs["points"] + origins
+                    outputs["depth"] = outputs["median_depth"]
                 else:
                     v_grid, h_grid = torch.meshgrid(v_angles, h_angles)
                     v_grid, h_grid = v_grid.flatten(), h_grid.flatten()
@@ -437,16 +435,13 @@ class LidarRenderer(threading.Thread):
                     )
                     outputs = model.get_outputs_for_camera_ray_bundle(lidar_ray_bundle)
                     points = outputs["depth"] * directions + origins
-                    depth = outputs["depth"].squeeze(-1)
-                    intensity = outputs["intensity"]
-                    ray_drop_prob = outputs["ray_drop_prob"].squeeze(-1) if "ray_drop_prob" in outputs else None
             model.train()
 
-        point_cloud = torch.cat([points, intensity], dim=-1)
-        if ray_drop_prob is not None and control_panel.lidar_use_ray_drop:
-            point_cloud = point_cloud[ray_drop_prob < control_panel.lidar_ray_drop_threshold]
+        point_cloud = torch.cat([points, outputs["intensity"]], dim=-1)
+        if "ray_drop_prob" in outputs and control_panel.lidar_use_ray_drop:
+            point_cloud = point_cloud[outputs["ray_drop_prob"].squeeze(-1) < control_panel.lidar_ray_drop_threshold]
         else:
-            point_cloud = point_cloud[depth < control_panel.lidar_max_dist]
+            point_cloud = point_cloud[outputs["depth"].squeeze(-1) < control_panel.lidar_max_dist]
         point_cloud = point_cloud.cpu().numpy()
 
         if self.rendered_pc_handle is not None:

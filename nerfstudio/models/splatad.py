@@ -43,6 +43,7 @@ from nerfstudio.data.datamanagers.full_images_lidar_datamanager import (
     AZIM_CHANNELS_PER_TILE,
     ELEV_CHANNELS_PER_TILE,
     FullImageLidarDatamanager,
+    get_lidar_elevation_boundaries,
     get_lidar_raster_params,
 )
 from nerfstudio.data.scene_box import OrientedBox
@@ -283,24 +284,6 @@ class SplatADModelConfig(ADModelConfig):
         if self.strategy == "mcmc":
             self.init_opacities = 0.5
             self.init_scale = 0.2
-
-
-def grid_tile_elevation_boundaries(elevations: torch.Tensor) -> torch.Tensor:
-    """Tile boundaries for a sorted elevation grid whose length is a multiple of ELEV_CHANNELS_PER_TILE.
-
-    Same construction as the datamanager's get_lidar_raster_params: one degree below the first
-    channel, the midpoint between consecutive groups of ELEV_CHANNELS_PER_TILE channels, and one
-    degree above the last channel, so every tile (including the last) is bracketed.
-    """
-    n = ELEV_CHANNELS_PER_TILE
-    assert elevations.numel() % n == 0, "grid must be padded to whole elevation tiles"
-    return torch.cat(
-        [
-            elevations[0:1] - 1.0,
-            (elevations[n::n] + elevations[n - 1 : -1 : n]) / 2,
-            elevations[-1:] + 1.0,
-        ]
-    )
 
 
 class SplatADModel(ADModel):
@@ -1060,16 +1043,8 @@ class SplatADModel(ADModel):
 
         return out
 
-    def get_lidar_outputs(self, lidar: Lidars) -> Dict[str, Union[torch.Tensor, List]]:
-        """Takes in a camera and returns a dictionary of outputs.
-
-        Args:
-            camera: The camera(s) for which output images are rendered. It should have
-            all the needed information to compute the outputs.
-
-        Returns:
-            Outputs of model. (ie. rendered colors)
-        """
+    def get_lidar_outputs(self, lidar: Lidars, return_points: bool = False) -> Dict[str, Union[torch.Tensor, List]]:
+        """Rasterize a scan/grid; optionally reconstruct points in the lidar frame for export/viewing."""
         if not isinstance(lidar, Lidars):
             print("Called get_outputs with not a camera")
             return {}
@@ -1088,36 +1063,19 @@ class SplatADModel(ADModel):
         if self.config.rasterize_mode not in ["antialiased", "classic"]:
             raise ValueError("Unknown rasterize_mode: %s", self.config.rasterize_mode)
 
-        if lidar.metadata and "raster_pts" in lidar.metadata:
-            raster_pts = lidar.metadata["raster_pts"][
-                ..., :-1
-            ]  # omit intensity channel, only needed for metric/loss computation
-            tile_elevation_boundaries = lidar.metadata["elevation_boundaries"]
-            min_azimuth = -180
-            max_azimuth = 180
-            min_elevation = tile_elevation_boundaries.min()
-            max_elevation = tile_elevation_boundaries.max()
-            azimuth_resolution = lidar.metadata["azimuth_resolution"]
-        else:
-            elevs, azims = torch.meshgrid(
-                torch.rad2deg(lidar.elevations.flatten()), torch.rad2deg(lidar.azimuths.flatten())
-            )
-            raster_pts = torch.stack([azims, elevs, torch.ones_like(azims), torch.zeros_like(azims)], dim=-1).to(
-                self.device
-            )[None]
-            tile_elevation_boundaries = torch.rad2deg(lidar.elevations[0, ::ELEV_CHANNELS_PER_TILE]).to(self.device)
-            tile_elevation_boundaries = tile_elevation_boundaries.flatten()
-            tile_elevation_boundaries = torch.cat(
-                [
-                    tile_elevation_boundaries,
-                    torch.tensor([tile_elevation_boundaries[..., -1].item() + 1], device=self.device),
-                ]
-            )
-            azimuth_resolution = float(torch.rad2deg((lidar.azimuths[0, 1] - lidar.azimuths[0, 0])))
-            min_azimuth = -180
-            max_azimuth = 180
-            min_elevation = tile_elevation_boundaries.min().item()
-            max_elevation = tile_elevation_boundaries.max().item() + 1e-6
+        if lidar.metadata is None:
+            lidar.metadata = {}
+        if "raster_pts" not in lidar.metadata:
+            self._add_grid_raster_metadata(lidar)
+        raster_pts = lidar.metadata["raster_pts"][..., :-1]  # omit ground-truth intensity
+        tile_elevation_boundaries = lidar.metadata["elevation_boundaries"]
+        min_azimuth, max_azimuth = -180, 180
+        min_elevation, max_elevation = tile_elevation_boundaries.min(), tile_elevation_boundaries.max()
+        azimuth_resolution = lidar.metadata["azimuth_resolution"]
+        point_times = raster_pts[..., 3:4]
+        if return_points:
+            # Preserve the caller's cached scan and the original times during in-place centering.
+            raster_pts = raster_pts.clone()
 
         # rolling shutter
         lidar_linear_vel = torch.zeros(1, 3, device=self.device)
@@ -1252,6 +1210,14 @@ class SplatADModel(ADModel):
 
         if alpha_sum_until_points is not None:
             out["alpha_sum_until_points"] = alpha_sum_until_points
+
+        if return_points:
+            points = out["median_depth"] * lidar_ray_dir
+            if "linear_velocities_local" in lidar.metadata:
+                # Undo the ego-motion removal applied when building the raster.
+                points = points + lidar.metadata["linear_velocities_local"].reshape(1, 1, 1, 3) * point_times
+            out["points"] = points
+            out["points_valid"] = raster_pts[..., 2] > 0
 
         return out  # type: ignore
 
@@ -1475,86 +1441,29 @@ class SplatADModel(ADModel):
     def get_outputs_for_lidar(
         self, lidar: Lidars, batch: Optional[Dict[str, Any]] = None
     ) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]:
-        """Renders a full lidar scan with the rasterizer.
+        """Render a raw/cached scan or viewer grid, returning points in the lidar frame.
 
-        Overrides the ray-based ``ADModel.get_outputs_for_lidar``: that path wraps the scan in a
-        ``RayBundle`` and ends in ``get_outputs`` raising "Unknown sensor type" for this model.
-        ``scripts/render.py`` hands over the raw dataset entry rather than the datamanager's cached
-        one, so the raster image and masks are built here when missing, with the datamanager's code.
-
-        Args:
-            lidar: one Lidars entry (shape [1]).
-            batch: dataset entry for the scan, with ``lidar`` ([N, 5]: xyz, intensity, time) or a
-                precomputed ``raster_pts``. If None, the scan is rendered on the regular grid given by
-                ``lidar.azimuths`` / ``lidar.elevations``.
-
-        Returns:
-            (outputs, batch). ``outputs["points"]`` is the rendered point cloud in the lidar frame with
-            the same [B, H, W] layout as ``outputs["ray_drop_prob"]``; ``outputs["points_valid"]``
-            marks cells that had a ground-truth ray.
+        Raster outputs have shape [B, H, W, C]; points_valid excludes empty/padded cells.
         """
-        assert lidar is not None, "must provide lidar to gaussian model"
         assert lidar.shape[0] == 1, "One lidar scan at a time"
-        # Raster tensors have image dimensions, not sensor batch dimensions. Keep them out of
-        # TensorDataclass's broadcasting when moving the lidar to the rendering device.
-        raster_keys = ("raster_pts", "elevation_boundaries", "azimuth_resolution")
-        raster_metadata = {key: value for key, value in (lidar.metadata or {}).items() if key in raster_keys}
-        if raster_metadata:
-            lidar = replace(
-                lidar, metadata={key: value for key, value in lidar.metadata.items() if key not in raster_keys}
-            )
-        lidar = lidar.to(self.device)
-        if lidar.metadata is None:
-            lidar.metadata = {}
-        lidar.metadata.update(
-            {key: value.to(self.device) if torch.is_tensor(value) else value for key, value in raster_metadata.items()}
-        )
+        # Move metadata separately: raster images must not participate in sensor broadcasting.
+        metadata = lidar.metadata or {}
+        lidar = replace(lidar, metadata=None).to(self.device)
+        lidar.metadata = {
+            key: value.to(self.device) if torch.is_tensor(value) else value for key, value in metadata.items()
+        }
         batch = {} if batch is None else batch
-
-        if "raster_pts" in batch:
-            for key in raster_keys:
-                if key in batch:
-                    value = batch[key]
-                    lidar.metadata[key] = value.to(self.device) if torch.is_tensor(value) else value
-        elif "lidar" in batch:
+        if "lidar" in batch and "raster_pts" not in batch:
             if "elevation_boundaries" not in batch:
-                lidar_type = LidarType(lidar.lidar_type.item())
-                elevation_boundaries, elevation_mapping, azimuth_resolution = get_lidar_raster_params(lidar_type)
-                batch["elevation_boundaries"] = elevation_boundaries
-                batch["elevation_mapping"] = elevation_mapping
-                batch["azimuth_resolution"] = azimuth_resolution
+                boundaries, mapping, resolution = get_lidar_raster_params(LidarType(lidar.lidar_type.item()))
+                batch.update(elevation_boundaries=boundaries, elevation_mapping=mapping, azimuth_resolution=resolution)
             batch.setdefault("is_eval", True)
             FullImageLidarDatamanager.add_raster_metadata(lidar, batch, self.device)
-        elif "raster_pts" not in lidar.metadata:
-            self._add_grid_raster_metadata(lidar)
-
-        # Rendering centers timestamps in place; never mutate a caller's cached scan.
-        raster_pts = lidar.metadata["raster_pts"].clone()
-        lidar.metadata["raster_pts"] = raster_pts
-        # snapshot before rendering: rolling-shutter compensation in get_lidar_outputs shifts the time
-        # channel in place, and the ego-motion term below must use the original per-point times.
-        times = raster_pts[..., 3:4].clone()
-        outputs = self.get_outputs(lidar)
-
-        azimuth = torch.deg2rad(raster_pts[..., 0])
-        elevation = torch.deg2rad(raster_pts[..., 1])
-        directions = torch.stack(
-            [
-                torch.cos(elevation) * torch.cos(azimuth),
-                torch.cos(elevation) * torch.sin(azimuth),
-                torch.sin(elevation),
-            ],
-            dim=-1,
-        )
-        depth = outputs["median_depth"].reshape(*raster_pts.shape[:-1], 1)
-        points = depth * directions
-        if "linear_velocities_local" in lidar.metadata:
-            # inverse of the ego-motion removal applied when the raster image was built (lidar_to_raster_pts)
-            velocity = lidar.metadata["linear_velocities_local"].to(self.device).reshape(1, 1, 1, 3)
-            points = points + velocity * times
-        outputs["points"] = points
-        outputs["points_valid"] = raster_pts[..., 2] > 0
-        return outputs, batch
+        for key in ("raster_pts", "elevation_boundaries", "azimuth_resolution"):
+            if key in batch:
+                value = batch[key]
+                lidar.metadata[key] = value.to(self.device) if torch.is_tensor(value) else value
+        return self.get_lidar_outputs(lidar, return_points=True), batch
 
     def _add_grid_raster_metadata(self, lidar: Lidars) -> None:
         """Raster metadata for a regular azimuth/elevation grid with no ground-truth scan (the viewer).
@@ -1586,7 +1495,7 @@ class SplatADModel(ADModel):
         valid[:, n_azim:] = 0.0
         raster_pts = torch.stack([azims, elevs, valid, torch.zeros_like(azims), torch.zeros_like(azims)], dim=-1)[None]
         lidar.metadata["raster_pts"] = raster_pts
-        lidar.metadata["elevation_boundaries"] = grid_tile_elevation_boundaries(elevations)
+        lidar.metadata["elevation_boundaries"] = get_lidar_elevation_boundaries(elevations)
         lidar.metadata["azimuth_resolution"] = azimuth_resolution
         lidar.metadata.setdefault("linear_velocities_local", torch.zeros(1, 3, device=self.device))
         lidar.metadata.setdefault("angular_velocities_local", torch.zeros(1, 3, device=self.device))

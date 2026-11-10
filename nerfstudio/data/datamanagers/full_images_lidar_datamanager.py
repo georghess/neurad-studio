@@ -62,7 +62,16 @@ def get_lidar_raster_params(lidar_type: LidarType) -> Tuple[torch.Tensor, torch.
     """Elevation tile boundaries, per-channel elevation mapping and azimuth resolution for a lidar type."""
     elevation_mapping = get_lidar_elevation_mapping(lidar_type)
     elevation_mapping = torch.tensor(sorted(elevation_mapping.values())).float()
-    elevation_boundaries = torch.cat(
+    return (
+        get_lidar_elevation_boundaries(elevation_mapping),
+        elevation_mapping,
+        get_lidar_azimuth_resolution(lidar_type),
+    )
+
+
+def get_lidar_elevation_boundaries(elevation_mapping: torch.Tensor) -> torch.Tensor:
+    """Bracket each elevation tile, including the first and last channels."""
+    return torch.cat(
         [
             elevation_mapping[0:1] - 1.0,
             (
@@ -73,8 +82,6 @@ def get_lidar_raster_params(lidar_type: LidarType) -> Tuple[torch.Tensor, torch.
             elevation_mapping[-1:] + 1.0,
         ]
     )
-    azimuth_resolution = get_lidar_azimuth_resolution(lidar_type)
-    return elevation_boundaries, elevation_mapping, azimuth_resolution
 
 
 @dataclass

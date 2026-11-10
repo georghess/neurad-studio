@@ -6,14 +6,11 @@ import pytest
 import torch
 
 from nerfstudio.cameras.lidars import Lidars, LidarType
-from nerfstudio.data.datamanagers.full_images_lidar_datamanager import get_lidar_raster_params
-from nerfstudio.models.ad_model import ADModel
-from nerfstudio.models.splatad import ELEV_CHANNELS_PER_TILE, SplatADModel, grid_tile_elevation_boundaries
-
-
-def test_splatad_overrides_ray_based_lidar_rendering():
-    """The inherited ADModel path builds a RayBundle, which SplatADModel.get_outputs rejects."""
-    assert SplatADModel.get_outputs_for_lidar is not ADModel.get_outputs_for_lidar
+from nerfstudio.data.datamanagers.full_images_lidar_datamanager import (
+    get_lidar_elevation_boundaries,
+    get_lidar_raster_params,
+)
+from nerfstudio.models.splatad import ELEV_CHANNELS_PER_TILE, SplatADModel
 
 
 def test_lidar_raster_params_bracket_the_elevation_channels():
@@ -27,29 +24,11 @@ def test_lidar_raster_params_bracket_the_elevation_channels():
         assert boundaries[0] < mapping.min() and boundaries[-1] > mapping.max()
 
 
-def test_splatad_advertises_rasterized_lidar_to_the_viewer():
-    assert SplatADModel.renders_lidar_by_rasterization is True
-    assert not getattr(ADModel, "renders_lidar_by_rasterization", False)
-
-
-def test_lidars_accept_azimuth_elevation_grids():
-    """The viewer builds a Lidars on a regular grid; azimuths/elevations are [*num_lidars, n, 1] fields."""
-
-    lidar = Lidars(
-        lidar_to_worlds=torch.eye(4)[:3][None],
-        times=torch.tensor([0.0]),
-        azimuths=torch.linspace(0, 6.28, 720)[None, :, None],
-        elevations=torch.linspace(-0.3, 0.3, 24)[None, :, None],
-    )
-    assert lidar.shape == (1,)
-    assert lidar.azimuths.shape == (1, 720, 1) and lidar.elevations.shape == (1, 24, 1)
-
-
 def test_grid_tile_boundaries_bracket_every_tile():
     """Viewer default: 24 beams over -15..15 deg. The last boundary must lie above the top beam
     (the earlier construction stopped at 6.87 deg and dropped the upper tiles)."""
     elevations = torch.linspace(-15.0, 15.0, 24)
-    b = grid_tile_elevation_boundaries(elevations)
+    b = get_lidar_elevation_boundaries(elevations)
     assert b.numel() == 24 // ELEV_CHANNELS_PER_TILE + 1
     assert torch.all(b[1:] > b[:-1])
     assert b[0] < elevations[0] and b[-1] > elevations[-1]
@@ -59,8 +38,8 @@ def test_grid_tile_boundaries_bracket_every_tile():
     assert torch.equal(tile, torch.arange(24) // ELEV_CHANNELS_PER_TILE)
 
 
-@pytest.mark.parametrize("raster_source", ["batch", "metadata"])
-def test_repeated_lidar_render_preserves_cached_scan(monkeypatch, raster_source):
+@pytest.fixture
+def lidar_model(monkeypatch):
     """Exercise real rolling-shutter compensation with a deterministic CPU rasterizer."""
     actor_times = []
 
@@ -102,8 +81,14 @@ def test_repeated_lidar_render_preserves_cached_scan(monkeypatch, raster_source)
         _get_actor_adjusted_means=adjusted_means,
         _get_appearance_embedding=lambda sensor, features: features[..., :0],
     )
-    model.get_lidar_outputs = lambda lidar: SplatADModel.get_lidar_outputs(model, lidar)
-    model.get_outputs = lambda lidar: SplatADModel.get_outputs(model, lidar)
+    model.get_lidar_outputs = lambda lidar, **kwargs: SplatADModel.get_lidar_outputs(model, lidar, **kwargs)
+    model._add_grid_raster_metadata = lambda lidar: SplatADModel._add_grid_raster_metadata(model, lidar)
+    return model, actor_times
+
+
+@pytest.mark.parametrize("raster_source", ["batch", "metadata"])
+def test_repeated_lidar_render_preserves_cached_scan(lidar_model, raster_source):
+    model, actor_times = lidar_model
     raster = torch.tensor([[[[0.0, 0.0, 1.0, -0.1, 0.5], [0.0, 0.0, 1.0, 0.0, 0.5]]]])
     original = raster.clone()
     raster_metadata = {
@@ -125,3 +110,20 @@ def test_repeated_lidar_render_preserves_cached_scan(monkeypatch, raster_source)
     torch.testing.assert_close(first["points"][..., 0], torch.tensor([[[0.0, 1.0]]]))
     torch.testing.assert_close(actor_times[0], torch.full_like(actor_times[0], 0.95))
     torch.testing.assert_close(actor_times[1], actor_times[0])
+
+
+@pytest.mark.parametrize("beams,azimuths", [(24, 720), (30, 1200)])
+def test_viewer_grid_keeps_all_rays_and_excludes_padding(lidar_model, beams, azimuths):
+    model, _ = lidar_model
+    lidar = Lidars(
+        lidar_to_worlds=torch.eye(4)[:3][None],
+        times=torch.tensor([1.0]),
+        azimuths=torch.arange(azimuths)[None, :, None] * (2 * torch.pi / azimuths),
+        elevations=torch.linspace(-0.26, 0.26, beams)[None, :, None],
+    )
+    outputs, _ = SplatADModel.get_outputs_for_lidar(model, lidar)
+    valid = outputs["points_valid"]
+    assert valid.sum() == beams * azimuths
+    assert valid[:, :beams, :azimuths].all()
+    assert not valid[:, beams:, :].any() and not valid[:, :, azimuths:].any()
+    torch.testing.assert_close(outputs["points"][valid].norm(dim=-1), torch.ones(beams * azimuths))
