@@ -1,0 +1,12 @@
+# CUDA 12.8 profile for RTX 50-series GPUs. Used as uv overrides because the
+# legacy dev extra caps torch below the first release supporting these GPUs.
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+# JSONSerializable was removed in dataclass-wizard 1.0.
+dataclass-wizard<0.23
+# diffusers 0.16.1 imports cached_download, removed in huggingface-hub 0.26.
+huggingface-hub<0.26
+# Keep the custom APIs used by this repository reproducible.
+gsplat @ git+https://github.com/carlinds/splatad.git@6e31ad766d39e0c33f9034a2ed772d51364b2343
+viser @ git+https://github.com/atonderski/viser.git@57142e42df8edd4de33fd60a08d6bb6c35970aa1
+pandaset @ git+https://github.com/scaleapi/pandaset-devkit.git@59be180e2a3f3e37f6d66af9e67bf944ccbf6ec0#subdirectory=python

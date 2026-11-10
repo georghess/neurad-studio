@@ -88,6 +88,16 @@ For more complex changes (e.g., running with your own data/setting up a new NeRF
 
 ## 1. Installation: Setup the environment
 
+For Linux machines with CUDA 12.8, including RTX 50-series GPUs, use the
+[uv setup](docs/setup.md) to create a local development environment without Conda:
+
+```bash
+CUDA_HOME=/usr/local/cuda-12.8 bash scripts/setup-env.sh
+source .venv/activate-neurad
+```
+
+The CUDA 11.8 instructions below are the original environment for older GPUs.
+
 ### Prerequisites
 
 Our installation steps largely follow Nerfstudio, with some added dataset-specific dependencies. You must have an NVIDIA video card with CUDA installed on the system. This library has been tested with version 11.8 of CUDA. You can find more information about installing CUDA [here](https://docs.nvidia.com/cuda/cuda-quick-start-guide/index.html).
