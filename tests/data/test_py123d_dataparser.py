@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Optional imports must follow the importorskip guard.
+# ruff: noqa: E402
+
 from pathlib import Path
 
 import numpy as np

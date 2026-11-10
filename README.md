@@ -89,14 +89,15 @@ For more complex changes (e.g., running with your own data/setting up a new NeRF
 ## 1. Installation: Setup the environment
 
 For Linux machines with CUDA 12.8, including RTX 50-series GPUs, use the
-[uv setup](docs/setup.md) to create a local development environment without Conda:
+[uv setup](docs/setup.md) to create a Python 3.12 development environment without Conda:
 
 ```bash
 CUDA_HOME=/usr/local/cuda-12.8 bash scripts/setup-env.sh
 source .venv/activate-neurad
 ```
 
-The CUDA 11.8 instructions below are the original environment for older GPUs.
+The CUDA 11.8 instructions below describe the legacy environment for older GPUs.
+Its Python 3.10 runtime is end of life; use the Python 3.12 setup above for new environments.
 
 ### Prerequisites
 

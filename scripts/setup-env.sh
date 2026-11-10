@@ -11,8 +11,9 @@ Usage: bash scripts/setup-env.sh
 
 Requires uv, git, gcc/g++, and a CUDA 12.8 toolkit. Set CUDA_HOME if the toolkit
 is not in /usr/local/cuda. A toolkit at .venv/cuda is detected automatically.
-Creates .venv with managed Python 3.10, installs development dependencies and
+Creates .venv with managed Python 3.12, installs development dependencies and
 tiny-cuda-nn, and writes .venv/activate-neurad for subsequent shells.
+Set NEURAD_VENV to create a separate environment when upgrading Python.
 HELP
     exit 0
 fi
@@ -38,44 +39,47 @@ if ! "$CUDA_HOME/bin/nvcc" --version | grep -q 'release 12.8,'; then
 fi
 
 # Use Python with headers so building extensions does not require python-dev.
-export UV_PYTHON_INSTALL_DIR="$repo_dir/.venv/python"
-if [[ ! -x .venv/bin/python ]]; then
-    uv python install 3.10 --no-bin
-    uv venv --allow-existing --managed-python --python 3.10 .venv
+venv_dir="${NEURAD_VENV:-$repo_dir/.venv}"
+mkdir -p "$venv_dir"
+venv_dir="$(cd "$venv_dir" && pwd)"
+export UV_PYTHON_INSTALL_DIR="$venv_dir/python"
+if [[ ! -x "$venv_dir/bin/python" ]]; then
+    uv python install 3.12 --no-bin
+    uv venv --allow-existing --managed-python --python 3.12 "$venv_dir"
 fi
-.venv/bin/python -c 'import sys; assert sys.version_info[:2] == (3, 10), "Use a Python 3.10 virtual environment"'
+"$venv_dir/bin/python" -c 'import sys; assert sys.version_info[:2] == (3, 12), "Use Python 3.12; set NEURAD_VENV to create a separate environment"'
 
-export PATH="$CUDA_HOME/bin:$repo_dir/.venv/bin:$PATH"
+export PATH="$CUDA_HOME/bin:$venv_dir/bin:$PATH"
 export MAX_JOBS="${MAX_JOBS:-4}"
-export TORCH_EXTENSIONS_DIR="$repo_dir/.venv/torch_extensions"
+export TORCH_EXTENSIONS_DIR="$venv_dir/torch_extensions"
 
 # Do not inherit compiler paths or flags from an unrelated Conda/Pixi shell.
 unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
 export CC="$(command -v gcc)" CXX="$(command -v g++)"
 
-uv pip install --python .venv/bin/python 'setuptools<70' wheel ninja pip
-uv pip install --python .venv/bin/python \
+uv pip install --python "$venv_dir/bin/python" 'setuptools<70' wheel ninja pip
+uv pip install --python "$venv_dir/bin/python" \
     'torch==2.7.1+cu128' 'torchvision==0.22.1+cu128' \
     --index-url https://download.pytorch.org/whl/cu128
 
 # gsplat compiles its kernels on first use, after torch has been installed.
-BUILD_NO_CUDA=1 uv pip install --python .venv/bin/python --no-build-isolation \
+BUILD_NO_CUDA=1 uv pip install --python "$venv_dir/bin/python" --no-build-isolation \
     --overrides scripts/requirements-cu128.txt \
     --extra-index-url https://download.pytorch.org/whl/cu128 \
     --index-strategy unsafe-best-match -e '.[dev]'
-uv pip install --python .venv/bin/python --no-build-isolation \
+uv pip install --python "$venv_dir/bin/python" --no-build-isolation \
     'git+https://github.com/NVlabs/tiny-cuda-nn.git@3daa6e5b8b8e0fa17971a1a20acfbb3754494b38#subdirectory=bindings/torch'
 
 # Keep CUDA visible to gsplat's lazy compiler in subsequent shells, too.
 {
-    printf 'source %q\n' "$repo_dir/.venv/bin/activate"
+    printf 'source %q\n' "$venv_dir/bin/activate"
     printf 'export CUDA_HOME=%q\n' "$CUDA_HOME"
     printf 'export PATH=%q:"$PATH"\n' "$CUDA_HOME/bin"
     printf 'export TORCH_EXTENSIONS_DIR=%q\n' "$TORCH_EXTENSIONS_DIR"
     printf 'export MAX_JOBS=%q\n' "$MAX_JOBS"
     printf 'export CC=%q CXX=%q\n' "$CC" "$CXX"
     printf 'unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS\n'
-} > .venv/activate-neurad
+} > "$venv_dir/activate-neurad"
 
-.venv/bin/python -c 'import torch, tinycudann; assert torch.cuda.is_available(); print(torch.cuda.get_device_name())'
-echo "Ready. Activate with: source .venv/activate-neurad"
+"$venv_dir/bin/python" -c 'import torch, tinycudann; assert torch.cuda.is_available(); print(torch.cuda.get_device_name())'
+echo "Ready. Activate with: source $venv_dir/activate-neurad"

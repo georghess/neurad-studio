@@ -1,0 +1,4 @@
+# Match the CUDA profile's PyTorch API on GitHub-hosted runners without GPUs.
+torch==2.7.1+cpu
+torchvision==0.22.1+cpu
+-r requirements-common.txt

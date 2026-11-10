@@ -226,9 +226,7 @@ class Py123dDataParser(ADDataParser):
             self._box_table = read_arrow_table(box_path)
 
         if self.config.use_capture_timestamps:
-            self._capture_table = load_capture_metadata_table(
-                log_dir, self.config.capture_metadata_modality
-            )
+            self._capture_table = load_capture_metadata_table(log_dir, self.config.capture_metadata_modality)
 
         # Keep TemporaryDirectory alive for the parser lifetime so images remain
         # readable, then clean up automatically when the parser is discarded.
@@ -343,7 +341,6 @@ class Py123dDataParser(ADDataParser):
         assert ego_pose_column is not None
 
         timestamp_column = modality_timestamp_column(self._lidar_table)
-        end_timestamp_column = modality_end_timestamp_column(self._lidar_table)
 
         ego_column_name = "ego_state_se3"
         for lidar_idx, _lidar_name in enumerate(self.config.lidars):

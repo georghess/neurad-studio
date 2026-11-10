@@ -5,36 +5,56 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      BUILD_NO_CUDA: "1"
 
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python 3.10.14
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: '3.10.14'
-      - uses: actions/cache@v4
+          persist-credentials: false
+      - name: Set up uv and Python 3.12
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          path: ${{ env.pythonLocation }}
-          key: ${{ env.pythonLocation }}-${{ hashFiles('pyproject.toml') }}
+          version: "0.13.6"
+          python-version: "3.12"
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements-*.txt
       - name: Install dependencies
         run: |
-          pip install uv
-          uv pip install --system --upgrade -e .[dev]
-          uv pip install waymo-open-dataset-tf-2-11-0==1.6.1
+          uv pip install --python .venv/bin/python 'setuptools<70' wheel ninja
+          uv pip install --python .venv/bin/python \
+            'torch==2.7.1+cpu' 'torchvision==0.22.1+cpu' \
+            --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --python .venv/bin/python --no-build-isolation \
+            --overrides scripts/requirements-cpu.txt \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            --index-strategy unsafe-best-match -e '.[dev]'
+          uv pip check --python .venv/bin/python
+      - name: Check training CLI
+        run: ns-train --help
       - name: Check notebook cell metadata
         run: |
           python ./nerfstudio/scripts/docs/add_nb_tags.py --check
       - name: Run Ruff Linter
         run: ruff check docs/ nerfstudio/ tests/ --output-format=github
       - name: Run Ruff Formatter
-        run: ruff format docs/ nerfstudio/ tests/ --diff
+        run: ruff format docs/ nerfstudio/ tests/ --check
       - name: Test with pytest
         run: |
           pytest
