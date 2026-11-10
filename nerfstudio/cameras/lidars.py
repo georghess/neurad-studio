@@ -109,8 +109,8 @@ class Lidars(TensorDataclass):
         assume_ego_compensated: bool = True,
         times: Optional[Float[Tensor, "*num_lidars"]] = None,
         metadata: Optional[Dict] = None,
-        horizontal_beam_divergence: Optional[Union[Float, Float[Tensor, "*num_lidars 1"]]] = None,
-        vertical_beam_divergence: Optional[Union[Float, Float[Tensor, "*num_lidars 1"]]] = None,
+        horizontal_beam_divergence: Optional[Union[float, Float[Tensor, "*num_lidars 1"]]] = None,
+        vertical_beam_divergence: Optional[Union[float, Float[Tensor, "*num_lidars 1"]]] = None,
         valid_lidar_distance_threshold: float = 1e3,
         azimuths: Optional[Float[Tensor, "*num_lidars n_azimuth_channels 1"]] = None,
         elevations: Optional[Float[Tensor, "*num_lidars n_elevation_channels 1"]] = None,
@@ -128,7 +128,7 @@ class Lidars(TensorDataclass):
         """
 
         # This will notify the tensordataclass that we have a field with more than 1 dimension
-        self._field_custom_dimensions = {"lidar_to_worlds": 2}
+        self._field_custom_dimensions = {"lidar_to_worlds": 2, "azimuths": 2, "elevations": 2}
 
         self.lidar_to_worlds = lidar_to_worlds
 
@@ -156,7 +156,7 @@ class Lidars(TensorDataclass):
 
     def _init_get_beam_divergence(
         self,
-        beam_divergence: Union[None, Float, Float[Tensor, "*num_lidars 1"]],
+        beam_divergence: Union[None, float, Float[Tensor, "*num_lidars 1"]],
         default: float,
     ) -> Float[Tensor, "*num_lidars 1"]:
         if beam_divergence is None:

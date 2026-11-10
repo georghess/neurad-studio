@@ -1157,8 +1157,14 @@ class DatasetRender(BaseRender):
                         ):
                             lidar_output, _ = pipeline.model.get_outputs_for_lidar(lidar, batch=batch)
                             points_in_local = lidar_output["points"]
+                            keep = torch.ones(
+                                points_in_local.shape[:-1], dtype=torch.bool, device=points_in_local.device
+                            )
                             if "ray_drop_prob" in lidar_output:
-                                points_in_local = points_in_local[(lidar_output["ray_drop_prob"] < 0.5).squeeze(-1)]
+                                keep &= (lidar_output["ray_drop_prob"] < 0.5).squeeze(-1)
+                            if "points_valid" in lidar_output:
+                                keep &= lidar_output["points_valid"]
+                            points_in_local = points_in_local[keep]
 
                             points_in_world = transform_points(points_in_local, lidar.lidar_to_worlds[0])
                             # get ground truth for comparison

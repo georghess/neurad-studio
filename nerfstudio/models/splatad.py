@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import math
 import warnings
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Type, Union
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
@@ -38,8 +38,14 @@ from nerfstudio.cameras.camera_optimizers import (
     CameraVelocityOptimizerConfig,
 )
 from nerfstudio.cameras.cameras import Cameras
-from nerfstudio.cameras.lidars import Lidars, transform_points, transform_points_pairwise
-from nerfstudio.data.datamanagers.full_images_lidar_datamanager import AZIM_CHANNELS_PER_TILE, ELEV_CHANNELS_PER_TILE
+from nerfstudio.cameras.lidars import Lidars, LidarType, transform_points, transform_points_pairwise
+from nerfstudio.data.datamanagers.full_images_lidar_datamanager import (
+    AZIM_CHANNELS_PER_TILE,
+    ELEV_CHANNELS_PER_TILE,
+    FullImageLidarDatamanager,
+    get_lidar_elevation_boundaries,
+    get_lidar_raster_params,
+)
 from nerfstudio.data.scene_box import OrientedBox
 from nerfstudio.data.utils.data_utils import points_in_box
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes, TrainingCallbackLocation
@@ -286,6 +292,9 @@ class SplatADModel(ADModel):
     Args:
         config: SplatAD configuration to instantiate model
     """
+
+    # The viewer checks this to hand lidar renders to get_outputs_for_lidar instead of a RayBundle.
+    renders_lidar_by_rasterization = True
 
     config: SplatADModelConfig
 
@@ -1034,16 +1043,8 @@ class SplatADModel(ADModel):
 
         return out
 
-    def get_lidar_outputs(self, lidar: Lidars) -> Dict[str, Union[torch.Tensor, List]]:
-        """Takes in a camera and returns a dictionary of outputs.
-
-        Args:
-            camera: The camera(s) for which output images are rendered. It should have
-            all the needed information to compute the outputs.
-
-        Returns:
-            Outputs of model. (ie. rendered colors)
-        """
+    def get_lidar_outputs(self, lidar: Lidars, return_points: bool = False) -> Dict[str, Union[torch.Tensor, List]]:
+        """Rasterize a scan/grid; optionally reconstruct points in the lidar frame for export/viewing."""
         if not isinstance(lidar, Lidars):
             print("Called get_outputs with not a camera")
             return {}
@@ -1062,36 +1063,19 @@ class SplatADModel(ADModel):
         if self.config.rasterize_mode not in ["antialiased", "classic"]:
             raise ValueError("Unknown rasterize_mode: %s", self.config.rasterize_mode)
 
-        if lidar.metadata and "raster_pts" in lidar.metadata:
-            raster_pts = lidar.metadata["raster_pts"][
-                ..., :-1
-            ]  # omit intensity channel, only needed for metric/loss computation
-            tile_elevation_boundaries = lidar.metadata["elevation_boundaries"]
-            min_azimuth = -180
-            max_azimuth = 180
-            min_elevation = tile_elevation_boundaries.min()
-            max_elevation = tile_elevation_boundaries.max()
-            azimuth_resolution = lidar.metadata["azimuth_resolution"]
-        else:
-            elevs, azims = torch.meshgrid(
-                torch.rad2deg(lidar.elevations.flatten()), torch.rad2deg(lidar.azimuths.flatten())
-            )
-            raster_pts = torch.stack([azims, elevs, torch.ones_like(azims), torch.zeros_like(azims)], dim=-1).to(
-                self.device
-            )[None]
-            tile_elevation_boundaries = torch.rad2deg(lidar.elevations[0, ::ELEV_CHANNELS_PER_TILE]).to(self.device)
-            tile_elevation_boundaries = tile_elevation_boundaries.flatten()
-            tile_elevation_boundaries = torch.cat(
-                [
-                    tile_elevation_boundaries,
-                    torch.tensor([tile_elevation_boundaries[..., -1].item() + 1], device=self.device),
-                ]
-            )
-            azimuth_resolution = float(torch.rad2deg((lidar.azimuths[0, 1] - lidar.azimuths[0, 0])))
-            min_azimuth = -180
-            max_azimuth = 180
-            min_elevation = tile_elevation_boundaries.min().item()
-            max_elevation = tile_elevation_boundaries.max().item() + 1e-6
+        if lidar.metadata is None:
+            lidar.metadata = {}
+        if "raster_pts" not in lidar.metadata:
+            self._add_grid_raster_metadata(lidar)
+        raster_pts = lidar.metadata["raster_pts"][..., :-1]  # omit ground-truth intensity
+        tile_elevation_boundaries = lidar.metadata["elevation_boundaries"]
+        min_azimuth, max_azimuth = -180, 180
+        min_elevation, max_elevation = tile_elevation_boundaries.min(), tile_elevation_boundaries.max()
+        azimuth_resolution = lidar.metadata["azimuth_resolution"]
+        point_times = raster_pts[..., 3:4]
+        if return_points:
+            # Preserve the caller's cached scan and the original times during in-place centering.
+            raster_pts = raster_pts.clone()
 
         # rolling shutter
         lidar_linear_vel = torch.zeros(1, 3, device=self.device)
@@ -1226,6 +1210,14 @@ class SplatADModel(ADModel):
 
         if alpha_sum_until_points is not None:
             out["alpha_sum_until_points"] = alpha_sum_until_points
+
+        if return_points:
+            points = out["median_depth"] * lidar_ray_dir
+            if "linear_velocities_local" in lidar.metadata:
+                # Undo the ego-motion removal applied when building the raster.
+                points = points + lidar.metadata["linear_velocities_local"].reshape(1, 1, 1, 3) * point_times
+            out["points"] = points
+            out["points_valid"] = raster_pts[..., 2] > 0
 
         return out  # type: ignore
 
@@ -1444,6 +1436,69 @@ class SplatADModel(ADModel):
         assert camera is not None, "must provide camera to gaussian model"
         outs = self.get_outputs(camera.to(self.device))
         return outs  # type: ignore
+
+    @torch.no_grad()
+    def get_outputs_for_lidar(
+        self, lidar: Lidars, batch: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]:
+        """Render a raw/cached scan or viewer grid, returning points in the lidar frame.
+
+        Raster outputs have shape [B, H, W, C]; points_valid excludes empty/padded cells.
+        """
+        assert lidar.shape[0] == 1, "One lidar scan at a time"
+        # Move metadata separately: raster images must not participate in sensor broadcasting.
+        metadata = lidar.metadata or {}
+        lidar = replace(lidar, metadata=None).to(self.device)
+        lidar.metadata = {
+            key: value.to(self.device) if torch.is_tensor(value) else value for key, value in metadata.items()
+        }
+        batch = {} if batch is None else batch
+        if "lidar" in batch and "raster_pts" not in batch:
+            if "elevation_boundaries" not in batch:
+                boundaries, mapping, resolution = get_lidar_raster_params(LidarType(lidar.lidar_type.item()))
+                batch.update(elevation_boundaries=boundaries, elevation_mapping=mapping, azimuth_resolution=resolution)
+            batch.setdefault("is_eval", True)
+            FullImageLidarDatamanager.add_raster_metadata(lidar, batch, self.device)
+        for key in ("raster_pts", "elevation_boundaries", "azimuth_resolution"):
+            if key in batch:
+                value = batch[key]
+                lidar.metadata[key] = value.to(self.device) if torch.is_tensor(value) else value
+        return self.get_lidar_outputs(lidar, return_points=True), batch
+
+    def _add_grid_raster_metadata(self, lidar: Lidars) -> None:
+        """Raster metadata for a regular azimuth/elevation grid with no ground-truth scan (the viewer).
+
+        Cells are laid out the way the datamanager lays out real scans: azimuth ascending from -180 deg,
+        elevation ascending, padded to whole tiles. Padded cells carry a zero range so ``points_valid``
+        masks them out. A static virtual sensor gets zero velocities for the rolling-shutter code.
+        """
+        assert (
+            lidar.azimuths is not None and lidar.elevations is not None
+        ), "grid rendering needs lidar.azimuths and lidar.elevations"
+        elevations = torch.rad2deg(lidar.elevations[0].flatten().float()).to(self.device)
+        azimuths = torch.rad2deg(lidar.azimuths[0].flatten().float()).to(self.device)
+        azimuth_resolution = float((azimuths[1] - azimuths[0]).abs()) if azimuths.numel() > 1 else 1.0
+        elevation_step = float((elevations[1] - elevations[0]).abs()) if elevations.numel() > 1 else 1.0
+        elevations, _ = torch.sort(elevations)
+        azimuths, _ = torch.sort((azimuths + 180.0) % 360.0 - 180.0)
+        n_elev, n_azim = elevations.numel(), azimuths.numel()
+        pad_h = (-n_elev) % ELEV_CHANNELS_PER_TILE
+        pad_w = (-n_azim) % AZIM_CHANNELS_PER_TILE
+        if pad_h:
+            extra = elevations[-1] + elevation_step * torch.arange(1, pad_h + 1, device=self.device)
+            elevations = torch.cat([elevations, extra])
+        if pad_w:
+            azimuths = torch.cat([azimuths, azimuths[-1:].expand(pad_w)])
+        elevs, azims = torch.meshgrid(elevations, azimuths, indexing="ij")
+        valid = torch.ones_like(azims)
+        valid[n_elev:, :] = 0.0
+        valid[:, n_azim:] = 0.0
+        raster_pts = torch.stack([azims, elevs, valid, torch.zeros_like(azims), torch.zeros_like(azims)], dim=-1)[None]
+        lidar.metadata["raster_pts"] = raster_pts
+        lidar.metadata["elevation_boundaries"] = get_lidar_elevation_boundaries(elevations)
+        lidar.metadata["azimuth_resolution"] = azimuth_resolution
+        lidar.metadata.setdefault("linear_velocities_local", torch.zeros(1, 3, device=self.device))
+        lidar.metadata.setdefault("angular_velocities_local", torch.zeros(1, 3, device=self.device))
 
     def get_image_metrics_and_images(
         self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
