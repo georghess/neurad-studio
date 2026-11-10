@@ -42,7 +42,8 @@ rm -rf /var/lib/apt/lists/*
 
 python3.10 -m pip install --no-cache-dir --upgrade pip "setuptools<70.0" pathtools promise pybind11
 python3.10 -m pip install --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-TCNN_CUDA_ARCHITECTURES="86;80" python3.10 -m pip install --no-cache-dir git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch
+python3.10 -m pip install --no-cache-dir ninja wheel
+MAX_JOBS=4 CMAKE_BUILD_PARALLEL_LEVEL=4 TCNN_CUDA_ARCHITECTURES="86;80" python3.10 -m pip install --no-cache-dir --no-build-isolation git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch
 
 mkdir -p /workspace
 cd /workspace
@@ -50,6 +51,7 @@ cd /workspace
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
 python3.10 -m pip install -e .[dev]
+python3.10 -m pip install --no-cache-dir "dataclass-wizard<0.23"  # nerfstudio imports JSONSerializable, removed in dataclass-wizard 1.0
 
 cd /workspace
 git clone --recurse-submodules https://github.com/carlinds/splatad.git

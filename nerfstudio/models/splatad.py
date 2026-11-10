@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import math
 import warnings
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Type, Union
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import numpy as np
 import torch
@@ -1473,8 +1473,8 @@ class SplatADModel(ADModel):
 
     @torch.no_grad()
     def get_outputs_for_lidar(
-        self, lidar: Lidars, batch: Optional[Dict[str, torch.Tensor]] = None
-    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        self, lidar: Lidars, batch: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, Any]]:
         """Renders a full lidar scan with the rasterizer.
 
         Overrides the ray-based ``ADModel.get_outputs_for_lidar``: that path wraps the scan in a
@@ -1495,13 +1495,24 @@ class SplatADModel(ADModel):
         """
         assert lidar is not None, "must provide lidar to gaussian model"
         assert lidar.shape[0] == 1, "One lidar scan at a time"
+        # Raster tensors have image dimensions, not sensor batch dimensions. Keep them out of
+        # TensorDataclass's broadcasting when moving the lidar to the rendering device.
+        raster_keys = ("raster_pts", "elevation_boundaries", "azimuth_resolution")
+        raster_metadata = {key: value for key, value in (lidar.metadata or {}).items() if key in raster_keys}
+        if raster_metadata:
+            lidar = replace(
+                lidar, metadata={key: value for key, value in lidar.metadata.items() if key not in raster_keys}
+            )
         lidar = lidar.to(self.device)
         if lidar.metadata is None:
             lidar.metadata = {}
+        lidar.metadata.update(
+            {key: value.to(self.device) if torch.is_tensor(value) else value for key, value in raster_metadata.items()}
+        )
         batch = {} if batch is None else batch
 
         if "raster_pts" in batch:
-            for key in ("raster_pts", "elevation_boundaries", "azimuth_resolution"):
+            for key in raster_keys:
                 if key in batch:
                     value = batch[key]
                     lidar.metadata[key] = value.to(self.device) if torch.is_tensor(value) else value
@@ -1517,7 +1528,9 @@ class SplatADModel(ADModel):
         elif "raster_pts" not in lidar.metadata:
             self._add_grid_raster_metadata(lidar)
 
-        raster_pts = lidar.metadata["raster_pts"]
+        # Rendering centers timestamps in place; never mutate a caller's cached scan.
+        raster_pts = lidar.metadata["raster_pts"].clone()
+        lidar.metadata["raster_pts"] = raster_pts
         # snapshot before rendering: rolling-shutter compensation in get_lidar_outputs shifts the time
         # channel in place, and the ego-motion term below must use the original per-point times.
         times = raster_pts[..., 3:4].clone()

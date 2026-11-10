@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Type, Union
+from typing import Any, Dict, Iterable, Optional, Sequence, Set, Tuple, Type, Union
 
 import msgpack
 import numpy as np
@@ -91,9 +91,7 @@ def get_pinhole_camera_metadata(arrow_path: Path) -> PinholeCameraMetadata:
     schema = pa.ipc.open_file(arrow_path).schema
     metadata = camera_metadata_from_dict(msgpack.unpackb(schema.metadata[b"metadata"], raw=False))
     if not isinstance(metadata, PinholeCameraMetadata):
-        raise TypeError(
-            f"Only pinhole cameras are supported; got {type(metadata).__name__} for '{arrow_path.name}'"
-        )
+        raise TypeError(f"Only pinhole cameras are supported; got {type(metadata).__name__} for '{arrow_path.name}'")
     return metadata
 
 
@@ -103,9 +101,7 @@ def get_lidar_merged_metadata(arrow_path: Path) -> LidarMergedMetadata:
     return get_metadata_from_arrow_schema(schema, LidarMergedMetadata)
 
 
-def find_lidar_entry(
-    merged_metadata: LidarMergedMetadata, lidar_name: str
-) -> Tuple[str, LidarMetadata]:
+def find_lidar_entry(merged_metadata: LidarMergedMetadata, lidar_name: str) -> Tuple[str, LidarMetadata]:
     """Return the metadata entry for a configured lidar name."""
     for lidar_id, entry in merged_metadata.lidar_metadatas.items():
         if entry.lidar_name == lidar_name:

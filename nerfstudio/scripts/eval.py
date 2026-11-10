@@ -1,3 +1,4 @@
+# Copyright 2026 the authors of NeuRAD and contributors.
 # Copyright 2024 the authors of NeuRAD and contributors.
 # Copyright 2022 the Regents of the University of California, Nerfstudio Team and contributors. All rights reserved.
 #
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import torch
 import tyro
 
 from nerfstudio.engine.trainer import TrainerConfig
@@ -44,8 +46,9 @@ class ComputePSNR:
     # Optional path to update the data root to
     data_root_path: Optional[Path] = None
 
+    @torch.no_grad()
     def main(self) -> None:
-        """Main function."""
+        """Evaluate a checkpoint and save metrics without retaining rendering or point-distance backward graphs."""
         config, pipeline, checkpoint_path, _ = eval_setup(self.load_config, update_config_callback=self.update_config)
         assert self.output_path.suffix == ".json"
         if self.render_output_path is not None:

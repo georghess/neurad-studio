@@ -1,0 +1,4 @@
+# CUDA 12.8 profile for RTX 50-series GPUs, used as uv dependency overrides.
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+-r requirements-common.txt

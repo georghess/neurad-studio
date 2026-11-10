@@ -15,6 +15,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy<2.0",
+    "pyarrow>=14,<26",  # Arrow 26+ requires NumPy 2 at runtime.
     "appdirs>=1.4",
     "av>=9.2.0",
     "awscli>=1.31.10",
@@ -73,7 +74,7 @@ dependencies = [
     "pandaset@git+https://github.com/scaleapi/pandaset-devkit.git#egg=pandaset&subdirectory=python",
     "av2==0.2.1",
     "fastapi[all]==0.110",
-    "numba==0.57",
+    "numba==0.60.0",
 ]
 
 [project.optional-dependencies]
@@ -81,7 +82,7 @@ dependencies = [
 # Generative related dependencies
 gen = [
     "diffusers==0.16.1",
-    "transformers==4.29.2",
+    "transformers==4.39.3",
     "accelerate==0.19.0",
     "bitsandbytes==0.39.0",
     "sentencepiece==0.1.99",
@@ -91,17 +92,16 @@ gen = [
 # Development packages
 dev = [
     "pre-commit==3.3.2",
-    "pytest==7.1.2",
-    "pytest-xdist==2.5.0",
+    "pytest==8.3.5",
+    "pytest-xdist==3.6.1",
     "typeguard==2.13.3",
+    "typing_extensions>=4.13",  # Public forward-reference evaluation for the test checker.
     "ruff==0.1.13",
     "sshconf==0.2.5",
     "pycolmap>=0.3.0",  # NOTE: pycolmap==0.3.0 is not available on newer python versions
     "diffusers==0.16.1",
     "opencv-stubs==0.0.7",
-    "transformers==4.29.2",
-    # pin torch to <=2.1 to fix https://github.com/pytorch/pytorch/issues/118736
-    "torch>=1.13.1,<2.2",
+    "transformers==4.39.3",
 ]
 
 # Documentation related packages
@@ -157,7 +157,7 @@ reportMissingImports = "warning"
 reportMissingTypeStubs = false
 reportPrivateImportUsage = false
 
-pythonVersion = "3.10"
+pythonVersion = "3.12"
 pythonPlatform = "Linux"
 
 [tool.ruff]
