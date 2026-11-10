@@ -8,7 +8,7 @@ import pytest
 import torch
 from torch import nn
 
-from nerfstudio.engine.optimizers import AdamOptimizerConfig, Optimizers
+from nerfstudio.engine.optimizers import AdamOptimizerConfig
 from nerfstudio.engine.schedulers import ExponentialDecaySchedulerConfig
 from nerfstudio.engine.trainer import Trainer, TrainerConfig
 from nerfstudio.pipelines.base_pipeline import Pipeline
@@ -23,6 +23,10 @@ class CheckpointPipeline(Pipeline):
         self.param = nn.Parameter(torch.tensor([1.0, 2.0, 3.0]))
         self.loaded_step = None
 
+    def get_param_groups(self):
+        """Expose the parameter to the production optimizer initialization path."""
+        return {"model": [self.param]}
+
     def load_pipeline(self, loaded_state, step, strict=True):
         """Restore the parameter without allocating a dataset or renderer."""
         nn.Module.load_state_dict(self, loaded_state, strict=strict)
@@ -30,22 +34,20 @@ class CheckpointPipeline(Pipeline):
 
 
 def make_trainer(checkpoint_dir: Path) -> Trainer:
-    """Initialize training state independently of Trainer.setup's optimizer ordering."""
+    """Initialize a small trainer using the production optimizer configuration."""
     trainer = Trainer.__new__(Trainer)
     trainer.config = TrainerConfig(load_optimizer=True, load_scheduler=True)
     trainer.pipeline = CheckpointPipeline()
     trainer.checkpoint_dir = checkpoint_dir
     trainer.checkpoint_saving_tracker = SimpleNamespace(did_degrade=lambda: False, reset_latest=lambda: None)
     trainer.grad_scaler = torch.cuda.amp.GradScaler(enabled=False)
-    trainer.optimizers = Optimizers(
-        {
-            "model": {
-                "optimizer": AdamOptimizerConfig(lr=0.01),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.001, max_steps=100),
-            }
-        },
-        {"model": [trainer.pipeline.param]},
-    )
+    trainer.config.optimizers = {
+        "model": {
+            "optimizer": AdamOptimizerConfig(lr=0.01),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.001, max_steps=100),
+        }
+    }
+    trainer.optimizers = trainer.setup_optimizers()
     return trainer
 
 
