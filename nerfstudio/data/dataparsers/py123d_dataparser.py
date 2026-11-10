@@ -173,8 +173,9 @@ class Py123dDataParser(ADDataParser):
         return torch.from_numpy(WLH_TO_LWH).float()[:3, :]
 
     def _generate_dataparser_outputs(self, split="train"):
-        self._load_arrow_tables()
-        self._extract_camera_images()
+        if self._sync_table is None:
+            self._load_arrow_tables()
+            self._extract_camera_images()
         return super()._generate_dataparser_outputs(split)
 
     def _load_arrow_tables(self) -> None:
