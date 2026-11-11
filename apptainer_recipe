@@ -1,78 +1,77 @@
 Bootstrap: docker
-From: nvidia/cuda:11.8.0-devel-ubuntu22.04
+From: ghcr.io/astral-sh/uv:0.13.6
+Stage: uv
+
+Bootstrap: docker
+From: nvidia/cuda:12.8.1-devel-ubuntu24.04
+Stage: final
+
+%arguments
+    TCNN_CUDA_ARCHITECTURES=70;75;80;86;89;90;100;120
+    MAX_JOBS=4
 
 %labels
-org.opencontainers.image.licenses = "Apache License 2.0"
-org.opencontainers.image.base.name="docker.io/library/nvidia/cuda:11.8.0-devel-ubuntu22.04"
+    org.opencontainers.image.licenses Apache-2.0
+    org.opencontainers.image.base.name docker.io/nvidia/cuda:12.8.1-devel-ubuntu24.04
+
+%files from uv
+    /uv /usr/local/bin/uv
+    /uvx /usr/local/bin/uvx
+
+# Build from the repository root; copy source without local datasets or environments.
+%files
+    nerfstudio /workspace/neurad-studio/nerfstudio
+    scripts /workspace/neurad-studio/scripts
+    pyproject.toml /workspace/neurad-studio/pyproject.toml
+    README.md /workspace/neurad-studio/README.md
+    LICENSE /workspace/neurad-studio/LICENSE
 
 %post
-DEBIAN_FRONTEND=noninteractive TZ=Europe/Berlin apt-get update && \
-apt-get install -y --no-install-recommends \
-build-essential \
-cmake \
-curl \
-wget \
-ffmpeg \
-git \
-vim-tiny \
-libatlas-base-dev \
-libhdf5-dev \
-libprotobuf-dev \
-protobuf-compiler \
-libboost-filesystem-dev \
-libboost-graph-dev \
-libboost-program-options-dev \
-libboost-system-dev \
-libboost-test-dev \
-libcgal-dev \
-libeigen3-dev \
-libflann-dev \
-libfreeimage-dev \
-libgflags-dev \
-libglew-dev \
-libmetis-dev \
-libqt5opengl5-dev \
-libsuitesparse-dev \
-python-is-python3 \
-python3.10-dev \
-python3-pip \
-qtbase5-dev \
-&& \
-rm -rf /var/lib/apt/lists/*
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    export CUDA_HOME=/usr/local/cuda
+    export NEURAD_VENV=/opt/neurad-venv
+    export PATH="$NEURAD_VENV/bin:$CUDA_HOME/bin:$PATH"
+    export TCNN_CUDA_ARCHITECTURES="{{ TCNN_CUDA_ARCHITECTURES }}"
+    export MAX_JOBS="{{ MAX_JOBS }}"
 
-python3.10 -m pip install --no-cache-dir --upgrade pip "setuptools<70.0" pathtools promise pybind11
-python3.10 -m pip install --no-cache-dir torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-python3.10 -m pip install --no-cache-dir ninja wheel
-MAX_JOBS=4 CMAKE_BUILD_PARALLEL_LEVEL=4 TCNN_CUDA_ARCHITECTURES="86;80" python3.10 -m pip install --no-cache-dir --no-build-isolation git+https://github.com/NVlabs/tiny-cuda-nn.git#subdirectory=bindings/torch
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        build-essential ca-certificates curl git ffmpeg libgl1 libglib2.0-0 libgomp1
+    rm -rf /var/lib/apt/lists/*
 
-mkdir -p /workspace
-cd /workspace
-
-git clone https://github.com/georghess/neurad-studio.git
-cd neurad-studio
-python3.10 -m pip install -e .[dev]
-python3.10 -m pip install --no-cache-dir "dataclass-wizard<0.23"  # nerfstudio imports JSONSerializable, removed in dataclass-wizard 1.0
-
-cd /workspace
-git clone --recurse-submodules https://github.com/carlinds/splatad.git
-cd splatad
-BUILD_NO_CUDA=1 python3.10 -m pip install -e .[dev]
-
-python -c "import viser; viser.ViserServer()"
-cd /workspace
+    cd /workspace/neurad-studio
+    bash scripts/setup-env.sh --skip-gpu-check
+    ns-train --help > /dev/null
+    # Build viewer assets while the image is writable.
+    python -c 'import viser; viser.ViserServer(host="127.0.0.1", port=0).stop()'
+    uv cache clean
 
 %environment
-export DEBIAN_FRONTEND=noninteractive
-export TZ=Europe/Berlin
-export CUDA_HOME="/usr/local/cuda"
-export TCNN_CUDA_ARCHITECTURES="86;80"
-export PATH="/usr/local/cuda/bin:$PATH"
-export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
+    export CUDA_HOME=/usr/local/cuda
+    export NEURAD_VENV=/opt/neurad-venv
+    export PATH="$NEURAD_VENV/bin:$CUDA_HOME/bin:$PATH"
+    export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+    export MAX_JOBS="${MAX_JOBS:-4}"
+    # SIF images are read-only; gsplat compiles its kernels on first use.
+    export TORCH_EXTENSIONS_DIR="${TORCH_EXTENSIONS_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/neurad/torch_extensions}"
+
+%test
+    set -eu
+    python -c 'import sys, torch; assert sys.version_info[:2] == (3, 12); assert torch.version.cuda == "12.8"'
+    python -c 'from gsplat import map_points_to_lidar_tiles, points_mapping_offset_encode, populate_image_from_points; from gsplat.rendering import lidar_rasterization'
+    python -c 'from pathlib import Path; import viser; assert (Path(viser.__file__).parent / "client/build/index.html").is_file()'
+    uv pip check --python /opt/neurad-venv/bin/python
+    ns-train --help > /dev/null
 
 %runscript
-cd /workspace
-exec /bin/bash -l "$@"
+    if [ "$#" -gt 0 ]; then
+        exec "$@"
+    fi
+    exec /bin/bash
 
 %startscript
-cd /workspace
-exec /bin/bash -l "$@"
+    if [ "$#" -gt 0 ]; then
+        exec "$@"
+    fi
+    exec /bin/bash

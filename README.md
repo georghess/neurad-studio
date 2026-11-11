@@ -153,7 +153,8 @@ If you want to use [SplatAD](nerfstudio/models/splatad.py), our 3DGS-based metho
 For a container with the same Python 3.12 / CUDA 12.8 environment, follow the
 [Docker build and run instructions](docs/setup.md#docker). The [Dockerfile](Dockerfile)
 builds your checked-out source and installs the custom SplatAD gsplat fork.
-An [Apptainer recipe](apptainer_recipe) is also available.
+The [Apptainer recipe](apptainer_recipe) uses the same environment; see the
+[Apptainer build and run instructions](docs/setup.md#apptainer).
 
 ## 2. Training your first model!
 
