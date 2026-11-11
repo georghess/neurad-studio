@@ -101,3 +101,85 @@ ruff check docs/ nerfstudio/ tests/
 ruff format docs/ nerfstudio/ tests/ --check
 pytest
 ```
+
+## Docker
+
+The Dockerfile uses the same setup script and dependency constraints as the local
+CUDA 12.8 environment. It builds the source in your checkout. The host needs an
+NVIDIA driver supporting CUDA 12.8 and NVIDIA Container Toolkit for GPU access;
+a host CUDA toolkit or Python installation is not required.
+
+```bash
+docker build -t neurad-studio .
+mkdir -p outputs
+docker run --rm -it --gpus all --shm-size=8g --ulimit nofile=65536:65536 \
+    -p 127.0.0.1:7007:7007 \
+    -v /absolute/path/to/pandaset:/data/pandaset:ro \
+    -v "$PWD/outputs:/workspace/neurad-studio/outputs" \
+    neurad-studio
+# Inside the container:
+ns-train neurad pandaset-data --data /data/pandaset
+```
+
+The default build includes tiny-cuda-nn for several GPU generations. To reduce
+build time, select only your GPU's compute capability (70 for V100, 80 for A100,
+86 for RTX 3090, 89 for RTX 4090, or 120 for RTX 5090):
+
+```bash
+docker build --build-arg TCNN_CUDA_ARCHITECTURES=120 -t neurad-studio .
+```
+
+The image can be built without a GPU. Its setup skips the runtime GPU check but
+still checks dependency compatibility, custom gsplat imports, and CLI startup.
+At runtime, verify GPU access with:
+
+```bash
+docker run --rm --gpus all neurad-studio \
+    python -c 'import torch, tinycudann; print(torch.cuda.get_device_name())'
+```
+
+Python and the virtual environment live under `/opt/neurad-venv`; gsplat compiles
+its CUDA kernels there on first use. Waymo's legacy TensorFlow packages are not
+included: their Python 3.10 constraints require a separate environment. This
+image replaces the old CUDA 11.8 Docker recipe.
+
+## Missing gsplat lidar functions or mismatched CUDA versions
+
+SplatAD requires `carlinds/splatad`, not the PyPI/upstream gsplat package. Errors
+about `map_points_to_lidar_tiles`, `points_mapping_offset_encode`, or
+`populate_image_from_points` usually indicate that the wrong package is installed.
+Rerun `scripts/setup-env.sh` in the supported environment, or rebuild the Docker
+image. Both use the pinned fork in `scripts/requirements-common.txt`; do not
+replace it with `pip install gsplat`.
+
+The CUDA toolkit used to build extensions must match the PyTorch CUDA build.
+The setup script checks for toolkit 12.8 and constrains PyTorch to 2.7.1+cu128
+throughout dependency installation, so a later package cannot silently upgrade
+it. `uv pip check` and imports of the required gsplat APIs run at the end of setup.
+
+## NeuRAD loading memory
+
+NeuRAD caches training images as uint8 by default and converts sampled pixels or
+patches to float32 in [0, 1]. This uses one quarter of the float32 image-cache
+storage. The default is one loader process with a queue of two batches. To retain
+float32 caching, set `--pipeline.datamanager.cache-images-type float32`.
+
+Caching still needs system RAM; reducing rays per batch only reduces the sampled
+batches, not the full image cache. On machines with limited RAM, start with:
+
+```bash
+ns-train neurad \
+    --pipeline.datamanager.num-processes 0 \
+    --pipeline.datamanager.camera-res-scale-factor 0.5 \
+    --pipeline.datamanager.eval-num-images-to-sample-from 16 \
+    --pipeline.datamanager.eval-num-times-to-repeat-images 100 \
+    pandaset-data --data /data/pandaset
+```
+
+This halves image dimensions (one quarter of the pixels), bounds the sampled
+image-evaluation cache, and runs batch generation in the main process. Complete
+image evaluation still visits the evaluation images. For container runs, allocate
+shared memory and file descriptors as shown above; default Docker shared memory
+can be too small for multiprocessing. Check host/container RAM limits if the OS
+prints `Killed`. An unexpectedly exited loader worker now raises an error instead
+of leaving training blocked on its queue.

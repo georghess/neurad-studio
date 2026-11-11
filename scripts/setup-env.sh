@@ -7,15 +7,23 @@ cd "$repo_dir"
 
 if [[ "${1:-}" == "--help" ]]; then
     cat <<'HELP'
-Usage: bash scripts/setup-env.sh
+Usage: bash scripts/setup-env.sh [--skip-gpu-check]
 
 Requires uv, git, gcc/g++, and a CUDA 12.8 toolkit. Set CUDA_HOME if the toolkit
 is not in /usr/local/cuda. A toolkit at .venv/cuda is detected automatically.
 Creates .venv with managed Python 3.12, installs development dependencies and
 tiny-cuda-nn, and writes .venv/activate-neurad for subsequent shells.
 Set NEURAD_VENV to create a separate environment when upgrading Python.
+For container builds without a GPU, pass --skip-gpu-check and set
+TCNN_CUDA_ARCHITECTURES to the target compute capabilities (e.g. "86;89;120").
 HELP
     exit 0
+fi
+skip_gpu_check=false
+if [[ "${1:-}" == "--skip-gpu-check" ]]; then
+    skip_gpu_check=true
+    shift
+    : "${TCNN_CUDA_ARCHITECTURES:?Set TCNN_CUDA_ARCHITECTURES for a build without GPU access}"
 fi
 if [[ $# -ne 0 ]]; then
     echo "Unknown argument. Run with --help for usage." >&2
@@ -81,5 +89,9 @@ uv pip install --python "$venv_dir/bin/python" --no-build-isolation \
     printf 'unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS\n'
 } > "$venv_dir/activate-neurad"
 
-"$venv_dir/bin/python" -c 'import torch, tinycudann; assert torch.cuda.is_available(); print(torch.cuda.get_device_name())'
+uv pip check --python "$venv_dir/bin/python"
+"$venv_dir/bin/python" -c 'from gsplat import map_points_to_lidar_tiles, points_mapping_offset_encode, populate_image_from_points; from gsplat.rendering import lidar_rasterization'
+if [[ "$skip_gpu_check" == false ]]; then
+    "$venv_dir/bin/python" -c 'import torch, tinycudann; assert torch.cuda.is_available(); print(torch.cuda.get_device_name())'
+fi
 echo "Ready. Activate with: source $venv_dir/activate-neurad"

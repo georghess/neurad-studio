@@ -104,6 +104,9 @@ class InputDataset(Dataset):
             image_idx: The image index in the dataset.
         """
         image = torch.from_numpy(self.get_numpy_image(image_idx))
+        height = min(self.cameras.height[image_idx], int(image.shape[0]))
+        width = min(self.cameras.width[image_idx], int(image.shape[1]))
+        image = image[:height, :width]
         if self._dataparser_outputs.alpha_color is not None and image.shape[-1] == 4:
             assert (self._dataparser_outputs.alpha_color >= 0).all() and (
                 self._dataparser_outputs.alpha_color <= 1
@@ -136,9 +139,10 @@ class InputDataset(Dataset):
                 data["mask"].shape[:2] == data["image"].shape[:2]
             ), f"Mask and image have different shapes. Got {data['mask'].shape[:2]} and {data['image'].shape[:2]}"
         if self.mask_color:
-            data["image"] = torch.where(
-                data["mask"] == 1.0, data["image"], torch.ones_like(data["image"]) * torch.tensor(self.mask_color)
-            )
+            color = torch.tensor(self.mask_color)
+            if image_type == "uint8":
+                color = (color * 255).to(torch.uint8)
+            data["image"] = torch.where(data["mask"] == 1.0, data["image"], color.to(data["image"]))
         metadata = self.get_metadata(data)
         data.update(metadata)
         return data
