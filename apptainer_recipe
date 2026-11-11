@@ -3,7 +3,7 @@ From: ghcr.io/astral-sh/uv:0.13.6
 Stage: uv
 
 Bootstrap: docker
-From: nvidia/cuda:12.8.1-devel-ubuntu24.04
+From: nvidia/cuda:12.8.1-base-ubuntu24.04
 Stage: final
 
 %arguments
@@ -12,7 +12,7 @@ Stage: final
 
 %labels
     org.opencontainers.image.licenses Apache-2.0
-    org.opencontainers.image.base.name docker.io/nvidia/cuda:12.8.1-devel-ubuntu24.04
+    org.opencontainers.image.base.name docker.io/nvidia/cuda:12.8.1-base-ubuntu24.04
 
 %files from uv
     /uv /usr/local/bin/uv
@@ -30,6 +30,7 @@ Stage: final
     set -eu
     export DEBIAN_FRONTEND=noninteractive
     export CUDA_HOME=/usr/local/cuda
+    export LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
     export NEURAD_VENV=/opt/neurad-venv
     export PATH="$NEURAD_VENV/bin:$CUDA_HOME/bin:$PATH"
     export TCNN_CUDA_ARCHITECTURES="{{ TCNN_CUDA_ARCHITECTURES }}"
@@ -37,22 +38,29 @@ Stage: final
 
     apt-get update
     apt-get install -y --no-install-recommends \
-        build-essential ca-certificates curl git ffmpeg libgl1 libglib2.0-0 libgomp1
+        build-essential ca-certificates curl git ffmpeg libgl1 libegl1 libglib2.0-0 libgomp1 \
+        cuda-nvcc-12-8 cuda-cudart-dev-12-8 cuda-nvrtc-dev-12-8 libcurand-dev-12-8
     rm -rf /var/lib/apt/lists/*
 
+    # Python installation needs no fake ownership; fakeroot's metadata
+    # interception can misidentify temporary files during editable installs.
+    unset LD_PRELOAD FAKEROOTKEY
     cd /workspace/neurad-studio
     bash scripts/setup-env.sh --skip-gpu-check
     ns-train --help > /dev/null
     # Build viewer assets while the image is writable.
-    python -c 'import viser; viser.ViserServer(host="127.0.0.1", port=0).stop()'
+    python scripts/prepare-container.py
     uv cache clean
+    rm -rf /root/.cache/yarn /root/.npm
 
 %environment
     export CUDA_HOME=/usr/local/cuda
+    export LIBRARY_PATH="$CUDA_HOME/lib64/stubs"
     export NEURAD_VENV=/opt/neurad-venv
     export PATH="$NEURAD_VENV/bin:$CUDA_HOME/bin:$PATH"
     export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
     export MAX_JOBS="${MAX_JOBS:-4}"
+    export CPATH="$NEURAD_VENV/lib/python3.12/site-packages/nvidia/cublas/include:$NEURAD_VENV/lib/python3.12/site-packages/nvidia/cusolver/include:$NEURAD_VENV/lib/python3.12/site-packages/nvidia/cusparse/include"
     # SIF images are read-only; gsplat compiles its kernels on first use.
     export TORCH_EXTENSIONS_DIR="${TORCH_EXTENSIONS_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/neurad/torch_extensions}"
 

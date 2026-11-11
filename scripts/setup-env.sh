@@ -7,7 +7,7 @@ cd "$repo_dir"
 
 if [[ "${1:-}" == "--help" ]]; then
     cat <<'HELP'
-Usage: bash scripts/setup-env.sh [--skip-gpu-check]
+Usage: bash scripts/setup-env.sh [--skip-gpu-check] [--dependencies-only]
 
 Requires uv, git, gcc/g++, and a CUDA 12.8 toolkit. Set CUDA_HOME if the toolkit
 is not in /usr/local/cuda. A toolkit at .venv/cuda is detected automatically.
@@ -16,18 +16,22 @@ tiny-cuda-nn, and writes .venv/activate-neurad for subsequent shells.
 Set NEURAD_VENV to create a separate environment when upgrading Python.
 For container builds without a GPU, pass --skip-gpu-check and set
 TCNN_CUDA_ARCHITECTURES to the target compute capabilities (e.g. "86;89;120").
+Use --dependencies-only to cache third-party packages before copying source into
+a container. Install the checkout afterwards with uv pip install --no-deps -e .
 HELP
     exit 0
 fi
 skip_gpu_check=false
-if [[ "${1:-}" == "--skip-gpu-check" ]]; then
-    skip_gpu_check=true
-    shift
+dependencies_only=false
+for arg in "$@"; do
+    case "$arg" in
+        --skip-gpu-check) skip_gpu_check=true ;;
+        --dependencies-only) dependencies_only=true ;;
+        *) echo "Unknown argument: $arg. Run with --help for usage." >&2; exit 2 ;;
+    esac
+done
+if [[ "$skip_gpu_check" == true ]]; then
     : "${TCNN_CUDA_ARCHITECTURES:?Set TCNN_CUDA_ARCHITECTURES for a build without GPU access}"
-fi
-if [[ $# -ne 0 ]]; then
-    echo "Unknown argument. Run with --help for usage." >&2
-    exit 2
 fi
 
 for command in uv git gcc g++; do
@@ -70,13 +74,21 @@ uv pip install --python "$venv_dir/bin/python" \
     'torch==2.7.1+cu128' 'torchvision==0.22.1+cu128' \
     --index-url https://download.pytorch.org/whl/cu128
 
+# PyTorch's C++ headers include these math headers even when an extension does
+# not link the corresponding libraries. Reuse the headers shipped with PyTorch.
+nvidia_headers="$venv_dir/lib/python3.12/site-packages/nvidia"
+export CPATH="$nvidia_headers/cublas/include:$nvidia_headers/cusolver/include:$nvidia_headers/cusparse/include"
+
 # gsplat compiles its kernels on first use, after torch has been installed.
 BUILD_NO_CUDA=1 uv pip install --python "$venv_dir/bin/python" --no-build-isolation \
     --overrides scripts/requirements-cu128.txt \
     --extra-index-url https://download.pytorch.org/whl/cu128 \
-    --index-strategy unsafe-best-match -e '.[dev]'
+    --index-strategy unsafe-best-match -r pyproject.toml --extra dev
 uv pip install --python "$venv_dir/bin/python" --no-build-isolation \
     'git+https://github.com/NVlabs/tiny-cuda-nn.git@3daa6e5b8b8e0fa17971a1a20acfbb3754494b38#subdirectory=bindings/torch'
+if [[ "$dependencies_only" == false ]]; then
+    uv pip install --python "$venv_dir/bin/python" --no-build-isolation --no-deps -e .
+fi
 
 # Keep CUDA visible to gsplat's lazy compiler in subsequent shells, too.
 {
@@ -85,6 +97,7 @@ uv pip install --python "$venv_dir/bin/python" --no-build-isolation \
     printf 'export PATH=%q:"$PATH"\n' "$CUDA_HOME/bin"
     printf 'export TORCH_EXTENSIONS_DIR=%q\n' "$TORCH_EXTENSIONS_DIR"
     printf 'export MAX_JOBS=%q\n' "$MAX_JOBS"
+    printf 'export CPATH=%q\n' "$CPATH"
     printf 'export CC=%q CXX=%q\n' "$CC" "$CXX"
     printf 'unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS\n'
 } > "$venv_dir/activate-neurad"
