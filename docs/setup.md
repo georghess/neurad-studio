@@ -2,7 +2,7 @@
 
 The CUDA 12.8 profile uses Python 3.12, PyTorch 2.7.1, and torchvision 0.22.1.
 It supports RTX 50-series GPUs, which cannot use the original CUDA 11.8 setup.
-The original Conda/container instructions remain available in the README.
+The original Conda instructions remain available in the README.
 
 ## Install
 
@@ -142,6 +142,45 @@ Python and the virtual environment live under `/opt/neurad-venv`; gsplat compile
 its CUDA kernels there on first use. Waymo's legacy TensorFlow packages are not
 included: their Python 3.10 constraints require a separate environment. This
 image replaces the old CUDA 11.8 Docker recipe.
+
+## Apptainer
+
+The [Apptainer recipe](../apptainer_recipe) uses the same Python 3.12 / CUDA 12.8
+setup script and dependency constraints as Docker. With Apptainer 1.3 or newer,
+build from the repository root so the recipe can copy your checked-out source:
+
+```bash
+apptainer build --fakeroot neurad-studio.sif apptainer_recipe
+# Optional: target only your GPU and reduce build parallelism.
+apptainer build --fakeroot --build-arg TCNN_CUDA_ARCHITECTURES=120 \
+    --build-arg MAX_JOBS=2 neurad-studio-rtx5090.sif apptainer_recipe
+```
+
+The build needs internet access but no GPU. It prebuilds the viewer assets and
+checks dependencies, custom gsplat imports, and CLI startup. If your cluster
+does not support fakeroot builds, ask its administrator to build the image or
+use a build host with that support. See the
+[Apptainer build documentation](https://apptainer.org/docs/user/1.3/build_a_container.html).
+
+Use `--nv` for GPU access and `--cleanenv` to avoid inheriting another Python or
+Conda environment. The host needs an NVIDIA driver supporting CUDA 12.8.
+
+```bash
+apptainer exec --cleanenv --nv neurad-studio.sif \
+    python -c 'import torch, tinycudann; print(torch.cuda.get_device_name())'
+mkdir -p outputs
+apptainer run --cleanenv --nv \
+    --bind /absolute/path/to/pandaset:/data/pandaset:ro \
+    --bind "$PWD/outputs:/outputs" neurad-studio.sif \
+    ns-train splatad --output-dir /outputs pandaset-data --data /data/pandaset
+```
+
+`apptainer run` without a command opens Bash. Commands keep the caller's working
+directory. The source and virtual environment inside the SIF are read-only;
+gsplat's runtime CUDA cache defaults to `$HOME/.cache/neurad/torch_extensions`
+(or under `XDG_CACHE_HOME` when set). To use writable scratch space instead,
+bind it and pass `--env TORCH_EXTENSIONS_DIR=/scratch/neurad/torch_extensions`.
+Waymo's legacy TensorFlow environment remains a separate install.
 
 ## Missing gsplat lidar functions or mismatched CUDA versions
 
