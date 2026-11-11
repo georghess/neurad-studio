@@ -61,7 +61,7 @@ Stage: final
     python -c 'import sys, torch; assert sys.version_info[:2] == (3, 12); assert torch.version.cuda == "12.8"'
     python -c 'from gsplat import map_points_to_lidar_tiles, points_mapping_offset_encode, populate_image_from_points; from gsplat.rendering import lidar_rasterization'
     python -c 'from pathlib import Path; import viser; assert (Path(viser.__file__).parent / "client/build/index.html").is_file()'
-    uv pip check --python /opt/neurad-venv/bin/python
+    uv --no-cache pip check --python /opt/neurad-venv/bin/python
     ns-train --help > /dev/null
 
 %runscript
