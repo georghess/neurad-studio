@@ -80,28 +80,29 @@ Contributions of new models, datasets, and fixes are welcome.
 
 # Quickstart
 
-Train **SplatAD** or **NeuRAD** on a PandaSet sequence. The supported setup uses
-Linux, an NVIDIA GPU, Python 3.12, and CUDA 12.8. Docker is the simplest starting
-point; it includes Python and the CUDA compiler.
+Train **SplatAD** or **NeuRAD** on a PandaSet sequence using **uv**. You need
+Linux, uv, Git, GCC/G++, the CUDA 12.8 toolkit (including `nvcc`), and an NVIDIA
+GPU with a compatible driver. The setup script manages Python 3.12 and the
+project's dependencies for you.
 
-| Setup | Prerequisites | Instructions |
-| --- | --- | --- |
-| Docker | NVIDIA driver supporting CUDA 12.8 and GPU-enabled Docker | Follow the steps below |
-| Local development | uv, Git, GCC/G++, CUDA 12.8 toolkit and NVIDIA driver | [Local setup](docs/setup.md#install) |
-| Apptainer / HPC | Apptainer and NVIDIA driver | [Build and run a SIF](docs/setup.md#apptainer) |
+Prefer a container? See [Docker](docs/setup.md#docker) or
+[Apptainer / HPC](docs/setup.md#apptainer).
 
-## 1. Build the environment
+## 1. Set up with uv
 
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
-docker build -t neurad-studio .
+CUDA_HOME=/usr/local/cuda-12.8 bash scripts/setup-env.sh
+source .venv/activate-neurad
+ns-train --help
 ```
 
-For a faster first build, target your GPU with
-`--build-arg TCNN_CUDA_ARCHITECTURES=120` for an RTX 5090, for example. See the
-[GPU architecture options](docs/setup.md#docker) for other GPUs. Subsequent source
-edits reuse the dependency build. The custom gsplat fork is installed automatically.
+Set `CUDA_HOME` to your toolkit's location. The script uses uv to create `.venv`,
+install the repository in editable mode and its pinned dependencies, and build
+tiny-cuda-nn. The custom gsplat fork is installed automatically. Run
+`source .venv/activate-neurad` in each new shell to restore the Python and CUDA
+environment. See [setup details](docs/setup.md#install) for other options.
 
 ## 2. Download data
 
@@ -113,21 +114,10 @@ it under `data/pandaset`. For the example below, sequence `001` should be at
 ## 3. Train
 
 ```bash
-mkdir -p outputs
-docker run --rm -it --gpus all --shm-size=8g --ulimit nofile=65536:65536 \
-    -p 127.0.0.1:7007:7007 \
-    --mount type=bind,src="$PWD/data/pandaset",dst=/data/pandaset,readonly \
-    --mount type=bind,src="$PWD/outputs",dst=/outputs \
-    neurad-studio ns-train splatad --output-dir /outputs \
-    pandaset-data --data /data/pandaset --sequence 001
-```
-
-Replace `splatad` with `neurad` to train NeuRAD. In an activated local environment,
-the equivalent command is:
-
-```bash
 ns-train splatad pandaset-data --data data/pandaset --sequence 001
 ```
+
+Replace `splatad` with `neurad` to train NeuRAD. Runs are saved under `outputs/`.
 
 First-run CUDA compilation can take a few minutes. Open the
 viewer URL printed in the terminal; for a remote host, forward port 7007, for
@@ -139,16 +129,15 @@ errors, see [dependency troubleshooting](docs/setup.md#missing-gsplat-lidar-func
 
 ## Resume, view, and render
 
-Run these commands inside the container or an activated local environment.
-Keep the same data and output mounts when reopening a container.
+Run these commands from the repository root with `.venv/activate-neurad` sourced.
 
 ```bash
 # Resume training; use the same model and dataset options as the original run.
-ns-train splatad --load-dir /outputs/path/to/nerfstudio_models \
-    --output-dir /outputs pandaset-data --data /data/pandaset --sequence 001
+ns-train splatad --load-dir outputs/path/to/nerfstudio_models \
+    pandaset-data --data data/pandaset --sequence 001
 
 # Open a saved run in the viewer.
-ns-viewer --load-config /outputs/path/to/config.yml
+ns-viewer --load-config outputs/path/to/config.yml
 
 # List rendering and export commands.
 ns-render --help
