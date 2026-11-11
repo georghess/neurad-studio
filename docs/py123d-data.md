@@ -36,6 +36,8 @@ metadata (`camera_name`) to modality keys (e.g. `camera.pcam_f0`). Lidar names (
 
 Only **pinhole** cameras (`PinholeCameraMetadata`) are supported today. Distortion is
 mapped to neurad's 6-element Brown model and undistorted by the image datamanager.
+Images marked `is_undistorted` in the Arrow metadata skip this correction, even
+when the original calibration coefficients are retained in the export.
 
 ### Optional capture-time sidecar
 
@@ -104,8 +106,24 @@ reference of common knobs.
 | `--time-to-center-pixel` | `0.0` | Offset from capture timestamp to center-row time (seconds) |
 | `--horizontal-beam-divergence` | `0.003` | Same public default as ZOD / PandaSet |
 | `--vertical-beam-divergence` | `0.0015` | Same public default as ZOD / PandaSet |
+| `--lidar-points-frame` | `imu` | Stored xyz frame; use `sensor` for custom exports already in sensor coordinates |
 | `--use-capture-timestamps` | `True` | Prefer per-camera times from capture sidecar |
 | `--capture-metadata-modality` | `custom.capture_metadata` | Custom modality key for that sidecar |
+
+### Lidar coordinates and timing
+
+Merged py123d clouds use IMU coordinates. The parser selects points belonging to the
+configured sensor using their `ids`, then transforms them into that sensor's frame
+using its calibration. Multi-sensor clouds require per-point IDs when selecting an
+individual sensor. Custom exports that already store sensor-frame coordinates must
+set `--lidar-points-frame sensor`.
+
+Point `timestamps`, when present, are read as absolute microseconds and converted
+to offsets from the synchronized ego pose's timestamp. Without point timestamps,
+the parser approximates acquisition times with a linear ramp over the recorded
+sweep interval, separately for each sensor. Missing channel values are represented
+as `-1`. The parser assumes points are already motion-compensated to the synchronized
+ego pose.
 
 ### Rolling shutter
 
@@ -151,8 +169,6 @@ mid-train eval (`--steps-per-eval-image 999999`, etc.) and / or downsample lidar
 ## Limitations / future work
 
 - Fisheye / wide-FOV cameras are not supported yet.
-- Lidar times use a linear sweep offset across the scan; true per-point timestamps
-  from the export are not consumed yet.
 - Multi-log training (list of `--log-id` values) is not implemented; train one log
   at a time.
 

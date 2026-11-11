@@ -24,6 +24,8 @@ from typing import Dict, List, Set, Tuple, Type
 
 import numpy as np
 import torch
+from py123d.datatypes.sensors.lidar import LidarID
+from typing_extensions import Literal
 
 from nerfstudio.cameras.cameras import Cameras, CameraType
 from nerfstudio.cameras.lidars import Lidars, LidarType
@@ -120,6 +122,8 @@ class Py123dDataParserConfig(ADDataParserConfig):
     """Horizontal lidar beam divergence used for rendering metadata."""
     vertical_beam_divergence: float = 1.5e-3
     """Vertical lidar beam divergence used for rendering metadata."""
+    lidar_points_frame: Literal["imu", "sensor"] = "imu"
+    """Stored xyz frame: official merged py123d exports use IMU; custom sensor-frame logs use sensor."""
     use_capture_timestamps: bool = True
     """Use per-camera capture timestamps from an optional custom modality sidecar."""
     capture_metadata_modality: str = DEFAULT_CAPTURE_METADATA_MODALITY
@@ -160,6 +164,7 @@ class Py123dDataParser(ADDataParser):
         self._lidar_table = None
         self._lidar_modality_key = "lidar.lidar_merged"
         self._lidar_to_imu = np.eye(4)
+        self._lidar_id = None
         self._box_table = None
         self._box_label_class = None
         self._capture_table = None
@@ -210,6 +215,9 @@ class Py123dDataParser(ADDataParser):
             merged_metadata = get_lidar_merged_metadata(lidar_path)
             _, lidar_entry = find_lidar_entry(merged_metadata, self.config.lidars[0])
             self._lidar_to_imu = pose_list_to_matrix(lidar_entry.lidar_to_imu_se3.array)
+            # An individual sensor needs filtering only when the file contains multiple sensors.
+            if len(merged_metadata.lidar_metadatas) > 1 and lidar_entry.lidar_id != LidarID.LIDAR_MERGED:
+                self._lidar_id = int(lidar_entry.lidar_id)
 
         if self.config.load_cuboids:
             box_path = log_dir / "box_detections_se3.arrow"
@@ -301,7 +309,10 @@ class Py123dDataParser(ADDataParser):
                         dtype=np.float32,
                     )
                 )
-                distortions.append(pinhole_distortion_to_neurad(metadata.distortion))
+                # Exporters may retain calibration coefficients for already-undistorted images.
+                distortions.append(
+                    pinhole_distortion_to_neurad(None if metadata.is_undistorted else metadata.distortion)
+                )
                 poses.append(pose)
                 idxs.append(cam_idx)
                 heights.append(metadata.height)
@@ -332,6 +343,7 @@ class Py123dDataParser(ADDataParser):
         filenames: List[Path] = []
         poses: List[np.ndarray] = []
         times: List[float] = []
+        pose_timestamps: List[int] = []
         idxs: List[int] = []
 
         ego_pose_column = None
@@ -341,7 +353,7 @@ class Py123dDataParser(ADDataParser):
                 break
         assert ego_pose_column is not None
 
-        timestamp_column = modality_timestamp_column(self._lidar_table)
+        ego_timestamp_column = modality_timestamp_column(self._ego_table)
 
         ego_column_name = "ego_state_se3"
         for lidar_idx, _lidar_name in enumerate(self.config.lidars):
@@ -353,7 +365,10 @@ class Py123dDataParser(ADDataParser):
 
                 filenames.append(lidar_row_path(row_idx))
                 poses.append(lidar_pose)
-                times.append(timestamp_column[row_idx].as_py() / 1e6)
+                # The points are expressed relative to this ego pose, not the sweep's start time.
+                pose_timestamp_us = ego_timestamp_column[ego_row_idx].as_py()
+                times.append(pose_timestamp_us / 1e6)
+                pose_timestamps.append(pose_timestamp_us)
                 idxs.append(lidar_idx)
 
         poses_tensor = torch.tensor(np.array(poses), dtype=torch.float32)
@@ -363,9 +378,13 @@ class Py123dDataParser(ADDataParser):
         lidars = Lidars(
             lidar_to_worlds=poses_tensor[:, :3, :4],
             lidar_type=self.config.lidar_type,
-            assume_ego_compensated=False,
+            # The producer already compensates points to the matched ego pose.
+            assume_ego_compensated=True,
             times=times_tensor,
-            metadata={"sensor_idxs": idxs_tensor},
+            metadata={
+                "sensor_idxs": idxs_tensor,
+                "pose_timestamp_us": torch.tensor(pose_timestamps, dtype=torch.int64).unsqueeze(-1),
+            },
             horizontal_beam_divergence=self.config.horizontal_beam_divergence,
             vertical_beam_divergence=self.config.vertical_beam_divergence,
             valid_lidar_distance_threshold=DUMMY_DISTANCE_VALUE / 2,
@@ -378,15 +397,24 @@ class Py123dDataParser(ADDataParser):
         timestamp_column = modality_timestamp_column(self._lidar_table)
         end_timestamp_column = modality_end_timestamp_column(self._lidar_table)
 
-        for filepath, lidar_time in zip(filepaths, lidars.times.squeeze(-1)):
+        for filepath, reference_us in zip(filepaths, lidars.metadata["pose_timestamp_us"].flatten()):
             row_idx = parse_lidar_row_path(filepath)
             start_us = timestamp_column[row_idx].as_py()
             end_us = end_timestamp_column[row_idx].as_py() if end_timestamp_column is not None else start_us
             sweep_duration_s = max((end_us - start_us) / 1e6, 0.0)
 
-            # lidar_ipc_to_numpy already returns relative sweep time offsets in
-            # [-sweep_duration, 0]; do not subtract absolute lidar timestamps.
-            pc = torch.from_numpy(lidar_ipc_to_numpy(data_column[row_idx].as_py(), sweep_duration_s))
+            pc = torch.from_numpy(
+                lidar_ipc_to_numpy(
+                    data_column[row_idx].as_py(),
+                    sweep_duration_s,
+                    lidar_id=self._lidar_id,
+                    reference_timestamp_us=int(reference_us),
+                    start_timestamp_us=start_us,
+                )
+            )
+            if self.config.lidar_points_frame == "imu":
+                extrinsic = torch.from_numpy(self._lidar_to_imu).to(pc)
+                pc[:, :3] = (pc[:, :3] - extrinsic[:3, 3]) @ extrinsic[:3, :3]
             point_clouds.append(pc)
 
         return point_clouds

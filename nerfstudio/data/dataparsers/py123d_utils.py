@@ -110,27 +110,65 @@ def find_lidar_entry(merged_metadata: LidarMergedMetadata, lidar_name: str) -> T
     raise KeyError(f"Lidar '{lidar_name}' not found in merged metadata. Available: {available}")
 
 
-def decode_lidar_ipc(data: bytes) -> np.ndarray:
-    """Decode embedded lidar IPC bytes to ``[x, y, z, intensity, channel]``."""
-    table = pa.ipc.open_stream(data).read_all()
+def _point_columns(table: pa.Table) -> np.ndarray:
+    """Stack a decoded lidar table's point columns into ``[x, y, z, intensity, channel]``."""
     x = table.column("x").to_numpy().astype(np.float32, copy=False)
     y = table.column("y").to_numpy().astype(np.float32, copy=False)
     z = table.column("z").to_numpy().astype(np.float32, copy=False)
     intensity = table.column("intensity").to_numpy().astype(np.float32) / 255.0
-    channel = table.column("channel").to_numpy().astype(np.float32)
+    channel = (
+        table.column("channel").to_numpy().astype(np.float32)
+        if "channel" in table.column_names
+        else np.full(len(table), -1, dtype=np.float32)
+    )
     return np.stack([x, y, z, intensity, channel], axis=1)
+
+
+def decode_lidar_ipc(data: bytes) -> np.ndarray:
+    """Decode embedded lidar IPC bytes to ``[x, y, z, intensity, channel]``."""
+    return _point_columns(pa.ipc.open_stream(data).read_all())
 
 
 def lidar_ipc_to_numpy(
     data: bytes,
     sweep_duration_s: float,
+    *,
+    lidar_id: Optional[int] = None,
+    reference_timestamp_us: Optional[int] = None,
+    start_timestamp_us: Optional[int] = None,
 ) -> np.ndarray:
-    """Decode lidar IPC bytes to neurad array format ``[x, y, z, intensity, time, channel]``."""
-    points = decode_lidar_ipc(data)
+    """Decode xyz/intensity/time/channel; select a sensor and preserve measured point times.
+
+    Missing channels are -1. Without point timestamps, synthesize a ramp over the sweep.
+    Callers supplying absolute timestamps must give the pose's reference time in microseconds.
+    """
+    table = pa.ipc.open_stream(data).read_all()
+    if lidar_id is not None:
+        if "ids" not in table.column_names:
+            raise ValueError("Selecting a lidar from a merged cloud requires per-point ids")
+        table = table.filter(pa.array(table.column("ids").to_numpy() == lidar_id))
+    points = _point_columns(table)
     num_points = points.shape[0]
     if num_points == 0:
         return np.zeros((0, 6), dtype=np.float32)
-    time_offsets = np.linspace(-sweep_duration_s, 0.0, num_points, dtype=np.float32)
+    if "timestamps" in table.column_names:
+        if reference_timestamp_us is None:
+            raise ValueError("Point timestamps require reference_timestamp_us")
+        # Subtract epoch times as integers before casting to float32 to retain microseconds.
+        time_offsets = (table.column("timestamps").to_numpy() - reference_timestamp_us) / 1e6
+    else:
+        start_offset = (
+            (start_timestamp_us - reference_timestamp_us) / 1e6
+            if start_timestamp_us is not None and reference_timestamp_us is not None
+            else -sweep_duration_s
+        )
+        end_offset = start_offset + sweep_duration_s
+        time_offsets = np.linspace(start_offset, end_offset, num_points, dtype=np.float32)
+        if "ids" in table.column_names:
+            ids = table.column("ids").to_numpy()
+            for sensor_id in np.unique(ids):
+                mask = ids == sensor_id
+                time_offsets[mask] = np.linspace(start_offset, end_offset, int(mask.sum()), dtype=np.float32)
     return np.concatenate([points[:, :4], time_offsets[:, None], points[:, 4:5]], axis=1).astype(np.float32)
 
 
