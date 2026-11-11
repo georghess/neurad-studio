@@ -19,7 +19,7 @@ from __future__ import annotations
 import io
 import uuid
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import msgpack
 import numpy as np
@@ -70,7 +70,15 @@ def _jpeg_bytes(seed: int) -> bytes:
     return buf.getvalue()
 
 
-def _lidar_ipc_bytes(num_points: int = 32) -> bytes:
+def _lidar_ipc_bytes(num_points: int = 32, points_per_sensor: Optional[Sequence[int]] = None) -> bytes:
+    """Encode a cloud with sensor IDs, optionally concatenating several sensors' point blocks."""
+    if points_per_sensor is not None:
+        num_points = int(sum(points_per_sensor))
+        sensor_ids = np.concatenate(
+            [np.full(count, sensor_id, dtype=np.uint8) for sensor_id, count in enumerate(points_per_sensor)]
+        )
+    else:
+        sensor_ids = np.zeros(num_points, dtype=np.uint8)
     xyz = np.stack(
         [
             np.linspace(1.0, 10.0, num_points, dtype=np.float32),
@@ -81,7 +89,6 @@ def _lidar_ipc_bytes(num_points: int = 32) -> bytes:
     )
     intensity = np.full(num_points, 128, dtype=np.uint8)
     channel = np.zeros(num_points, dtype=np.uint16)
-    ids = np.arange(num_points, dtype=np.int32)
     table = pa.table(
         {
             "x": xyz[:, 0],
@@ -89,7 +96,7 @@ def _lidar_ipc_bytes(num_points: int = 32) -> bytes:
             "z": xyz[:, 2],
             "intensity": intensity,
             "channel": channel,
-            "ids": ids,
+            "ids": sensor_ids,
         }
     )
     sink = pa.BufferOutputStream()

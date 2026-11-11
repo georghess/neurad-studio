@@ -27,3 +27,24 @@ def mini_log(tmp_path_factory) -> Path:
 
     root = tmp_path_factory.mktemp("py123d_data")
     return build_mini_py123d_log(root)
+
+
+@pytest.fixture
+def make_py123d_log(tmp_path_factory):
+    """Build a synthetic log with non-default options, each in its own directory."""
+
+    from py123d_fixtures import build_mini_py123d_log
+
+    def _make(**kwargs) -> Path:
+        return build_mini_py123d_log(tmp_path_factory.mktemp("py123d_data"), **kwargs)
+
+    return _make
+
+
+@pytest.fixture
+def make_lidar_ipc_bytes():
+    """Encode one lidar sweep, optionally as several sensors' points in contiguous blocks."""
+
+    from py123d_fixtures import _lidar_ipc_bytes
+
+    return _lidar_ipc_bytes
