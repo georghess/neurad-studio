@@ -267,6 +267,116 @@ def _make_parser(log_dir: Path, **overrides):
     return Py123dDataParser(Py123dDataParserConfig(**config))
 
 
+def test_py123d_handles_null_sync_references(make_py123d_log) -> None:
+    """Missing camera frames and lidar sweeps are skipped while real images stay readable."""
+    log_dir = make_py123d_log(null_sync_samples={"CAM_FRONT_LEFT": [2], "lidar": [0]})
+    parser = _make_parser(log_dir)
+    outputs = parser.get_dataparser_outputs("train")
+
+    # 3 CAM_FRONT frames + 2 CAM_FRONT_LEFT frames, and 2 of 3 lidar sweeps.
+    assert len(outputs.image_filenames) == 5
+    assert outputs.cameras.shape[0] == 5
+    assert all(path.exists() for path in outputs.image_filenames)
+    assert outputs.metadata["lidars"].shape[0] == 2
+    assert len(outputs.metadata["point_clouds"]) == 2
+
+
+def test_py123d_image_paths_survive_a_second_split(mini_log: Path) -> None:
+    """Paths handed out for one split must still be readable after the next split parses."""
+    parser = _make_parser(mini_log, cameras=("CAM_FRONT",), train_split_fraction=0.5)
+
+    train = parser.get_dataparser_outputs("train")
+    train_paths = list(train.image_filenames)
+    assert train_paths and all(path.exists() for path in train_paths)
+
+    val = parser.get_dataparser_outputs("val")
+
+    assert all(path.exists() for path in train_paths), "train images deleted by the eval parse"
+    assert all(path.exists() for path in val.image_filenames)
+
+
+def test_py123d_georeferenced_poses_keep_their_precision(make_py123d_log) -> None:
+    """Recentered camera, lidar and actor poses agree within 1 mm at global-map coordinates."""
+    torch = pytest.importorskip("torch")
+
+    def parse(origin):
+        log_dir = make_py123d_log(num_samples=6, global_origin=origin)
+        return _make_parser(log_dir, load_cuboids=True).get_dataparser_outputs("train")
+
+    at_origin = parse((0.0, 0.0, 0.0))
+    georeferenced = parse((3.8e6, 1.2e6, 40.0))
+
+    cam_error = (georeferenced.cameras.camera_to_worlds[:, :3, 3] - at_origin.cameras.camera_to_worlds[:, :3, 3]).abs()
+    lidar_error = (
+        georeferenced.metadata["lidars"].lidar_to_worlds[:, :3, 3]
+        - at_origin.metadata["lidars"].lidar_to_worlds[:, :3, 3]
+    ).abs()
+    actor_error = (
+        georeferenced.metadata["trajectories"][0]["poses"][:, :3, 3]
+        - at_origin.metadata["trajectories"][0]["poses"][:, :3, 3]
+    ).abs()
+
+    assert float(cam_error.max()) < 1e-3
+    assert float(lidar_error.max()) < 1e-3
+    assert float(actor_error.max()) < 1e-3
+
+    # dataparser_transform still maps the exporter's global frame into the world frame.
+    transform = georeferenced.dataparser_transform.double()
+    global_pose = torch.tensor([3.8e6, 1.2e6, 40.0, 1.0], dtype=torch.float64)
+    world_pose = transform @ global_pose
+    assert float(world_pose.abs().max()) < 10.0, world_pose
+
+
+def test_py123d_lidar_sensor_offset_is_a_frame_change_only(mini_log: Path) -> None:
+    """`lidar_sensor_offset` must move points into the sensor frame without moving the world."""
+    torch = pytest.importorskip("torch")
+
+    offset = (0.0, 0.0, 1.5)
+
+    stored_frame = _make_parser(mini_log, cameras=("CAM_FRONT",)).get_dataparser_outputs("train")
+    sensor_frame = _make_parser(mini_log, cameras=("CAM_FRONT",), lidar_sensor_offset=offset).get_dataparser_outputs(
+        "train"
+    )
+
+    offset_tensor = torch.tensor(offset)
+    for stored_pc, sensor_pc in zip(stored_frame.metadata["point_clouds"], sensor_frame.metadata["point_clouds"]):
+        # The points themselves are shifted into the sensor frame...
+        assert torch.allclose(sensor_pc[:, :3], stored_pc[:, :3] - offset_tensor, atol=1e-6)
+
+    def world_points(outputs):
+        # Camera 0 is a fixed landmark across the two differently recentered parses.
+        lidar_to_worlds = outputs.metadata["lidars"].lidar_to_worlds
+        anchor = outputs.cameras.camera_to_worlds[0, :3, 3]
+        out = []
+        for idx, pc in enumerate(outputs.metadata["point_clouds"]):
+            rotation = lidar_to_worlds[idx, :3, :3]
+            translation = lidar_to_worlds[idx, :3, 3]
+            out.append(pc[:, :3] @ rotation.T + translation - anchor)
+        return torch.cat(out)
+
+    assert torch.allclose(world_points(sensor_frame), world_points(stored_frame), atol=1e-5)
+
+
+@pytest.mark.parametrize("sensor", ["CAM_FRONT", "lidar"])
+def test_singleton_sensor_keeps_zero_velocities(make_py123d_log, sensor):
+    """Missing sync entries may leave just one frame: keep its pose finite and motion zero."""
+    torch = pytest.importorskip("torch")
+    log = make_py123d_log(null_sync_samples={sensor: [0, 1]})
+    parser = _make_parser(log)
+    outputs = parser.get_dataparser_outputs("train")
+    sensors = outputs.cameras if sensor == "CAM_FRONT" else outputs.metadata["lidars"]
+    sensor_idx = 0 if sensor == "CAM_FRONT" else len(parser.config.cameras)
+    mask = (sensors.metadata["sensor_idxs"] == sensor_idx).squeeze(-1)
+    assert mask.sum() == 1
+    for key in ("velocities", "linear_velocities_local", "angular_velocities_local"):
+        torch.testing.assert_close(sensors.metadata[key][mask], torch.zeros(1, 3))
+    assert torch.isfinite(outputs.cameras.metadata["velocities"]).all()
+    assert torch.isfinite(outputs.metadata["lidars"].metadata["velocities"]).all()
+    assert torch.isfinite(outputs.dataparser_transform).all()
+    assert torch.isfinite(outputs.cameras.camera_to_worlds).all()
+    assert torch.isfinite(outputs.metadata["lidars"].lidar_to_worlds).all()
+
+
 def _encode_lidar_table(table):
     import pyarrow as pa
 
@@ -361,7 +471,9 @@ def test_lidar_export_preserves_world_points_and_capture_times(make_py123d_log, 
     with pa.ipc.new_file(ego_path, ego.schema) as writer:
         writer.write_table(ego)
 
-    parser = _make_parser(log, min_lidar_dist=(0.0, 0.0, 0.0), lidar_points_frame=points_frame)
+    parser = _make_parser(
+        log, min_lidar_dist=(0.0, 0.0, 0.0), lidar_points_frame=points_frame, lidar_sensor_offset=(0.0, 0.0, 0.25)
+    )
     outputs = parser.get_dataparser_outputs("train")
     lidars = outputs.metadata["lidars"]
     assert lidars.assume_ego_compensated

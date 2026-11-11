@@ -107,6 +107,7 @@ reference of common knobs.
 | `--horizontal-beam-divergence` | `0.003` | Same public default as ZOD / PandaSet |
 | `--vertical-beam-divergence` | `0.0015` | Same public default as ZOD / PandaSet |
 | `--lidar-points-frame` | `imu` | Stored xyz frame; use `sensor` for custom exports already in sensor coordinates |
+| `--lidar-sensor-offset` | `0.0 0.0 0.0` | Additional origin offset in sensor coordinates; leave zero when metadata calibration is correct |
 | `--use-capture-timestamps` | `True` | Prefer per-camera times from capture sidecar |
 | `--capture-metadata-modality` | `custom.capture_metadata` | Custom modality key for that sidecar |
 

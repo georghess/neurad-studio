@@ -364,6 +364,9 @@ class ADDataParser(DataParser):
         for sensor_idx in cameras.metadata["sensor_idxs"].unique():
             mask = (cameras.metadata["sensor_idxs"] == sensor_idx).squeeze(-1)
             cam2worlds, times = cameras.camera_to_worlds[mask], cameras.times[mask]
+            if len(cam2worlds) < 2:
+                # Keep initialized zero velocities when motion cannot be estimated.
+                continue
             translation_velo = (cam2worlds[1:, :3, 3] - cam2worlds[:-1, :3, 3]) / (times[1:] - times[:-1])
             next_cam = cam2worlds[1:]
             prev_cam = cam2worlds[:-1]
@@ -391,6 +394,9 @@ class ADDataParser(DataParser):
         for sensor_idx in lidars.metadata["sensor_idxs"].unique():
             mask = (lidars.metadata["sensor_idxs"] == sensor_idx).squeeze(-1)
             lidar2worlds, times = lidars.lidar_to_worlds[mask], lidars.times[mask]
+            if len(lidar2worlds) < 2:
+                # Keep initialized zero velocities when motion cannot be estimated.
+                continue
             translation_velo = (lidar2worlds[1:, :3, 3] - lidar2worlds[:-1, :3, 3]) / (times[1:] - times[:-1])
             next_lidar = lidar2worlds[1:]
             prev_lidar = lidar2worlds[:-1]
@@ -654,7 +660,7 @@ def _get_world_to_mean_transform(cameras: Cameras, lidars: Lidars):
     selected_idx = sensor_idxs[0]
     select_poses = poses[sensor_idxs == selected_idx]
     select_trajectory = select_poses[:, :3, 3]
-    if torch.std(select_trajectory, dim=0).max() < 1e-1:
+    if len(select_trajectory) == 1 or torch.std(select_trajectory, dim=0).max() < 1e-1:
         # If the trajectory is stationary, return the first pose
         m2w = to4x4(select_poses[0:1])[0]
     else:

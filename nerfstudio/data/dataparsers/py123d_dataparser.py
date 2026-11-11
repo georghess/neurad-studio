@@ -124,6 +124,10 @@ class Py123dDataParserConfig(ADDataParserConfig):
     """Vertical lidar beam divergence used for rendering metadata."""
     lidar_points_frame: Literal["imu", "sensor"] = "imu"
     """Stored xyz frame: official merged py123d exports use IMU; custom sensor-frame logs use sensor."""
+    lidar_sensor_offset: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    """Additional origin offset in the selected sensor frame. Shifts points and poses together
+    to preserve world geometry. Leave zero when the sensor extrinsic is already correct.
+    """
     use_capture_timestamps: bool = True
     """Use per-camera capture timestamps from an optional custom modality sidecar."""
     capture_metadata_modality: str = DEFAULT_CAPTURE_METADATA_MODALITY
@@ -171,6 +175,7 @@ class Py123dDataParser(ADDataParser):
         self._image_tmpdir = None
         self._image_dir: Path = Path()
         self._image_paths: Dict[Tuple[str, int], Path] = {}
+        self._pose_origin = np.zeros(3)
 
     @property
     def actor_transform(self) -> torch.Tensor:
@@ -181,7 +186,20 @@ class Py123dDataParser(ADDataParser):
         if self._sync_table is None:
             self._load_arrow_tables()
             self._extract_camera_images()
-        return super()._generate_dataparser_outputs(split)
+        outputs = super()._generate_dataparser_outputs(split)
+        # Preserve the exporter's global-to-world mapping; keep float64 until the final cast.
+        transform = outputs.dataparser_transform.double()
+        translation = transform[:, 3] - transform[:, :3] @ torch.from_numpy(self._pose_origin)
+        outputs.dataparser_transform = torch.cat([transform[:, :3], translation[:, None]], dim=-1).to(
+            outputs.dataparser_transform
+        )
+        return outputs
+
+    def _recenter(self, pose: np.ndarray) -> np.ndarray:
+        """Return a copy of a 4x4 global pose with the float64 pose origin subtracted."""
+        pose = np.array(pose, dtype=np.float64, copy=True)
+        pose[:3, 3] -= self._pose_origin
+        return pose
 
     def _load_arrow_tables(self) -> None:
         log_dir = self.config.data / "logs" / self.config.split / self.config.log_id
@@ -191,6 +209,9 @@ class Py123dDataParser(ADDataParser):
 
         self._sync_table = read_arrow_table(log_dir / "sync.arrow")
         self._ego_table = read_arrow_table(log_dir / "ego_state_se3.arrow")
+        # Recenter before casting poses to float32, which loses centimeters at global-map scales.
+        pose_column = next(name for name in self._ego_table.column_names if name.endswith(".imu_se3"))
+        self._pose_origin = np.asarray(self._ego_table.column(pose_column)[0].as_py()[:3], dtype=np.float64)
         self._camera_name_to_modality = build_camera_name_to_modality_key(log_dir)
 
         missing_cameras = [name for name in self.config.cameras if name not in self._camera_name_to_modality]
@@ -248,10 +269,7 @@ class Py123dDataParser(ADDataParser):
             modality_key = self._camera_name_to_modality[camera_name]
             table = self._camera_tables[modality_key]
             data_column = modality_data_column(table)
-            needed_rows = {
-                int(self._sync_table.column(modality_key)[sync_row].as_py())
-                for sync_row in iter_sync_rows(self._sync_table)
-            }
+            needed_rows = set(self._sync_table.column(modality_key).drop_null().to_pylist())
             for row_idx in sorted(needed_rows):
                 image_bytes = data_column[row_idx].as_py()
                 if not image_bytes:
@@ -282,8 +300,12 @@ class Py123dDataParser(ADDataParser):
             assert pose_column is not None
 
             for sync_row in iter_sync_rows(self._sync_table):
-                row_idx = int(self._sync_table.column(modality_key)[sync_row].as_py())
-                pose = pose_list_to_matrix(pose_column[row_idx].as_py())
+                row_ref = self._sync_table.column(modality_key)[sync_row].as_py()
+                if row_ref is None:
+                    # Staggered cameras may have no frame at this sync sample.
+                    continue
+                row_idx = int(row_ref)
+                pose = self._recenter(pose_list_to_matrix(pose_column[row_idx].as_py()))
                 pose[:3, :3] = pose[:3, :3] @ OPENCV_TO_NERFSTUDIO
 
                 anchor_ts_us = timestamp_column[row_idx].as_py()
@@ -355,13 +377,21 @@ class Py123dDataParser(ADDataParser):
 
         ego_timestamp_column = modality_timestamp_column(self._ego_table)
 
+        sensor_offset = np.eye(4)
+        sensor_offset[:3, 3] = self.config.lidar_sensor_offset
         ego_column_name = "ego_state_se3"
         for lidar_idx, _lidar_name in enumerate(self.config.lidars):
             for sync_row in iter_sync_rows(self._sync_table):
-                row_idx = int(self._sync_table.column(self._lidar_modality_key)[sync_row].as_py())
-                ego_row_idx = int(self._sync_table.column(ego_column_name)[sync_row].as_py())
+                row_ref = self._sync_table.column(self._lidar_modality_key)[sync_row].as_py()
+                ego_row_ref = self._sync_table.column(ego_column_name)[sync_row].as_py()
+                if row_ref is None or ego_row_ref is None:
+                    continue  # no sweep (or no ego pose) for this sample; see _get_cameras
+                row_idx = int(row_ref)
+                ego_row_idx = int(ego_row_ref)
                 ego_pose = pose_list_to_matrix(ego_pose_column[ego_row_idx].as_py())
-                lidar_pose = ego_pose @ self._lidar_to_imu
+                # Fold the stored-frame -> sensor-origin translation into the pose, so that
+                # shifting the points in _read_lidars leaves world-space geometry identical.
+                lidar_pose = self._recenter(ego_pose @ self._lidar_to_imu @ sensor_offset)
 
                 filenames.append(lidar_row_path(row_idx))
                 poses.append(lidar_pose)
@@ -393,6 +423,7 @@ class Py123dDataParser(ADDataParser):
 
     def _read_lidars(self, lidars: Lidars, filepaths: List[Path]) -> List[torch.Tensor]:
         point_clouds: List[torch.Tensor] = []
+        offset = torch.tensor(self.config.lidar_sensor_offset, dtype=torch.float32)
         data_column = modality_data_column(self._lidar_table)
         timestamp_column = modality_timestamp_column(self._lidar_table)
         end_timestamp_column = modality_end_timestamp_column(self._lidar_table)
@@ -415,6 +446,9 @@ class Py123dDataParser(ADDataParser):
             if self.config.lidar_points_frame == "imu":
                 extrinsic = torch.from_numpy(self._lidar_to_imu).to(pc)
                 pc[:, :3] = (pc[:, :3] - extrinsic[:3, 3]) @ extrinsic[:3, :3]
+            # Pair with the pose offset in _get_lidars to preserve world-space geometry.
+            if torch.any(offset != 0):
+                pc[:, :3] -= offset
             point_clouds.append(pc)
 
         return point_clouds
@@ -444,7 +478,7 @@ class Py123dDataParser(ADDataParser):
                 if not track_token:
                     continue
                 box = bounding_box_se3_from_list(box_values)
-                pose = box.center_se3.transformation_matrix @ WLH_TO_LWH
+                pose = self._recenter(box.center_se3.transformation_matrix) @ WLH_TO_LWH
                 # neurad dims are documented as wlh; py123d stores length/width/height.
                 wlh = np.array([box.width, box.length, box.height], dtype=np.float32)
                 category = box_label_to_category(self._box_label_class, int(label_value))
