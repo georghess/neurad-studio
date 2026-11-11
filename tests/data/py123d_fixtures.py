@@ -105,17 +105,31 @@ def _lidar_ipc_bytes(num_points: int = 32, points_per_sensor: Optional[Sequence[
     return sink.getvalue().to_pybytes()
 
 
-def build_mini_py123d_log(data_root: Path, *, num_samples: int = NUM_SAMPLES) -> Path:
+def build_mini_py123d_log(
+    data_root: Path,
+    *,
+    num_samples: int = NUM_SAMPLES,
+    null_sync_samples: Dict[str, Sequence[int]] | None = None,
+    global_origin: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> Path:
     """Write a tiny synthetic py123d log under ``data_root/logs/{split}/{log_id}/``.
 
     Returns the log directory path. Clears py123d's log-metadata LRU cache so the
     new files are visible to subsequent ``parse_log_directory_metadata`` calls.
+
+    ``null_sync_samples`` maps camera names or "lidar" to missing sample indices.
+    ``global_origin`` translates all global poses before encoding, to test georeferenced logs.
     """
     log_dir = data_root / "logs" / MINI_SPLIT / MINI_LOG_ID
     log_dir.mkdir(parents=True, exist_ok=True)
 
     base_ts = 1_700_000_000_000_000
     timestamps = [base_ts + i * 500_000 for i in range(num_samples)]
+
+    origin_x, origin_y, origin_z = (float(value) for value in global_origin)
+
+    def _global_pose(x: float, y: float = 0.0, z: float = 0.0) -> List[float]:
+        return _pose(x + origin_x, y + origin_y, z + origin_z)
 
     camera_meta: Dict[str, PinholeCameraMetadata] = {}
     for camera_name, camera_id in CAMERAS:
@@ -139,7 +153,7 @@ def build_mini_py123d_log(data_root: Path, *, num_samples: int = NUM_SAMPLES) ->
             rows_ts.append(ts)
             rows_data.append(_jpeg_bytes(hash((camera_name, i)) & 0xFFFF))
             # Camera pose in world: translate with ego.
-            rows_pose.append(_pose(float(i)))
+            rows_pose.append(_global_pose(float(i)))
         table = pa.table(
             {
                 f"{modality}.timestamp_us": pa.array(rows_ts, type=pa.int64()),
@@ -163,7 +177,7 @@ def build_mini_py123d_log(data_root: Path, *, num_samples: int = NUM_SAMPLES) ->
         {
             "ego_state_se3.timestamp_us": pa.array(timestamps, type=pa.int64()),
             "ego_state_se3.imu_se3": pa.array(
-                [_pose(float(i)) for i in range(num_samples)], type=pa.list_(pa.float64(), 7)
+                [_global_pose(float(i)) for i in range(num_samples)], type=pa.list_(pa.float64(), 7)
             ),
             "ego_state_se3.dynamic_state_se3": pa.array(
                 [[1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] for _ in range(num_samples)],
@@ -226,7 +240,18 @@ def build_mini_py123d_log(data_root: Path, *, num_samples: int = NUM_SAMPLES) ->
     num_pts: List[List[int]] = []
     for i in range(num_samples):
         # length, width, height after xyz + quat
-        box = [float(i) * 2.0, 5.0, 0.5, 1.0, 0.0, 0.0, 0.0, 4.0, 2.0, 1.5]
+        box = [
+            float(i) * 2.0 + origin_x,
+            5.0 + origin_y,
+            0.5 + origin_z,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            4.0,
+            2.0,
+            1.5,
+        ]
         boxes.append([box])
         tokens.append(["track_vehicle_0"])
         labels.append([int(DefaultBoxDetectionLabel.VEHICLE)])
@@ -255,6 +280,13 @@ def build_mini_py123d_log(data_root: Path, *, num_samples: int = NUM_SAMPLES) ->
     }
     for metadata in camera_meta.values():
         sync_cols[metadata.modality_key] = list(range(num_samples))
+
+    for key, sample_idxs in (null_sync_samples or {}).items():
+        column = "lidar.lidar_merged" if key == "lidar" else camera_meta[key].modality_key
+        values = list(sync_cols[column])
+        for sample_idx in sample_idxs:
+            values[sample_idx] = None
+        sync_cols[column] = values
 
     arrays = {
         "sync.uuid": pa.array(sync_cols["sync.uuid"], type=pa.uuid()),
