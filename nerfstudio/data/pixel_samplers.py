@@ -680,7 +680,7 @@ class ScaledPatchSampler(PixelSampler):
             image = batch["image"][img_idx].unsqueeze(0)
             _, height, width, _ = image.shape
             patch_center_indices = self.sample_method(
-                patches_in_img, 1, height, width, rgb_size, sampling_weights=None, device=device
+                int(patches_in_img), 1, height, width, rgb_size, sampling_weights=None, device=device
             )
             ray_indices, img_patches = self._patches_from_centers(image, patch_center_indices, rgb_size, device)
             all_img_patches.append(img_patches)

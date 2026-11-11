@@ -188,3 +188,10 @@ camera_paths/
 */**/.DS_Store
 */**/._.DS_Store
 
+# Never send checkout metadata, local credentials or experiment artifacts to the builder.
+.git
+.codex
+.agents
+.aws
+.env.*
+.ruff_cache

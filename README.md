@@ -150,9 +150,10 @@ pip install -e .
 If you want to use [SplatAD](nerfstudio/models/splatad.py), our 3DGS-based method for camera and lidar rendering (paper [here](research.zenseact.com/publications/splatad/)), you will need to also install [our custom fork of gsplat](git@github.com:carlinds/splatad.git).
 
 
-**OR** if you want to skip all installation steps and directly start using NeuRAD, use the provided docker image or apptainer recipe:
-
-[Dockerfile](Dockerfile) or [Apptainer recipe](apptainer_recipe).
+For a container with the same Python 3.12 / CUDA 12.8 environment, follow the
+[Docker build and run instructions](docs/setup.md#docker). The [Dockerfile](Dockerfile)
+builds your checked-out source and installs the custom SplatAD gsplat fork.
+An [Apptainer recipe](apptainer_recipe) is also available.
 
 ## 2. Training your first model!
 

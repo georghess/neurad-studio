@@ -19,6 +19,7 @@ Lidar Datamanager.
 from __future__ import annotations
 
 import concurrent.futures
+import queue
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
@@ -80,9 +81,9 @@ class ImageLidarDataManagerConfig(ParallelDataManagerConfig):
 
     _target: Type = field(default_factory=lambda: ImageLidarDataManager)
     """Target class to instantiate."""
-    num_processes: int = 8
+    num_processes: int = 1
     """Number of processes to use for train data loading. More than 1 doesn't result in that much better performance"""
-    queue_size: int = 8
+    queue_size: int = 2
     """Size of shared data queue containing generated ray bundles and batches."""
     train_num_lidar_rays_per_batch: int = 1024
     """Number of lidar rays per batch to use per training iteration."""
@@ -91,6 +92,8 @@ class ImageLidarDataManagerConfig(ParallelDataManagerConfig):
     downsample_factor: float = 1
     """Downsample factor for the lidar. If <1, downsample will be used."""
     max_thread_workers: Optional[int] = 1
+    cache_images_type: Literal["uint8", "float32"] = "uint8"
+    """Cache training images as bytes; convert only sampled pixels/patches to float32."""
 
 
 class ImageLidarDataProcessor(mp.Process):  # type: ignore
@@ -156,6 +159,8 @@ class ImageLidarDataProcessor(mp.Process):  # type: ignore
         if not len(self.image_dataset.cameras):
             return None, None
         batch = self.pixel_sampler.sample(self.cached_images)
+        if batch["image"].dtype == torch.uint8:
+            batch["image"] = batch["image"].float() / 255.0
         ray_indices = batch["indices"]
         ray_bundle: RayBundle = self.ray_generator(ray_indices)
         return batch, ray_bundle
@@ -224,7 +229,9 @@ class ImageLidarDataManager(ParallelDataManager):
             self.train_lidar_dataset.lidars,
         )
         # Cache jointly to allow memory sharing between processes
-        cached_images = _cache_images(self.train_dataset, self.config.max_thread_workers, self.config.collate_fn)
+        cached_images = _cache_images(
+            self.train_dataset, self.config.max_thread_workers, self.config.collate_fn, self.config.cache_images_type
+        )
         cached_points = _cache_points(self.train_lidar_dataset, self.config.max_thread_workers, lidar_packed_collate)
         self.data_queue = mp.Queue(maxsize=self.config.queue_size) if self.use_mp else None
         # Create an individual queue for passing functions to each process
@@ -298,7 +305,18 @@ class ImageLidarDataManager(ParallelDataManager):
 
     def _get_from_queue(self) -> Tuple[RayBundle, Dict]:
         if self.use_mp:
-            ray_bundle, batch = self.data_queue.get()
+            while True:
+                try:
+                    ray_bundle, batch = self.data_queue.get(timeout=1.0)
+                    break
+                except queue.Empty:
+                    failed = [proc for proc in self.data_procs if proc.exitcode is not None]
+                    if failed:
+                        raise RuntimeError(
+                            "Data-loading worker exited unexpectedly (exit codes "
+                            f"{[proc.exitcode for proc in failed]}). Check system RAM and /dev/shm; "
+                            "try --pipeline.datamanager.num-processes 0 or a smaller camera-res-scale-factor."
+                        ) from None
         else:
             # Manually call the data processing function (not in parallel)
             ray_bundle, batch = self.data_procs[0].get_batch_and_ray_bundle()
@@ -348,14 +366,14 @@ class ImageLidarDataManager(ParallelDataManager):
             super().__del__()
 
 
-def _cache_images(image_dataset, workers, collate_fn):
+def _cache_images(image_dataset, workers, collate_fn, image_type="float32"):
     """Caches all input images into a NxHxWx3 tensor."""
     indices = range(len(image_dataset))
     batch_list = []
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         for idx in indices:
-            res = executor.submit(image_dataset.__getitem__, idx)
+            res = executor.submit(image_dataset.get_data, idx, image_type=image_type)
             results.append(res)
         for res in track(results, description="Loading data batch", transient=False):
             batch_list.append(res.result())
