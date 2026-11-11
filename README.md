@@ -15,7 +15,7 @@
 <div align="center">
 <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/_static/imgs/neurad_logo_with_text_dark.png" />
-    <img alt="tyro logo" src="docs/_static/imgs/neurad_logo_with_text.png" width="80%"/>
+    <img alt="NeuRAD logo" src="docs/_static/imgs/neurad_logo_with_text.png" width="80%"/>
 </picture>
 </div>
 
@@ -27,7 +27,7 @@
 
 [Quickstart](#quickstart) ·
 [Learn more](#learn-more) ·
-[Planned Features](#planned-featurestodos) ·
+[Datasets](#adding-datasets) ·
 [Project page](https://research.zenseact.com/publications/neurad/)
 
 </div>
@@ -36,13 +36,10 @@
 
 This is the official code release of the following papers:
 - CVPR 2024 [paper](https://arxiv.org/abs/2311.15260) _NeuRAD: Neural Rendering for Autonomous Driving_
-- CVPR 2025 [paper](https://arxiv.org/abs/2411.16816) _SplatAD: Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous Driving_ (build on top of [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio)).
+- CVPR 2025 [paper](https://arxiv.org/abs/2411.16816) _SplatAD: Real-Time Lidar and Camera Rendering with 3D Gaussian Splatting for Autonomous Driving_
 
-Besides releasing the code for NeuRAD and SplatAD, we hope that this can lay the ground-work for research on applying neural rendering methods in autonomous driving.
-
-In line with Nerfstudio's mission, this is a contributor-friendly repo with the goal of building a community where users can more easily build upon each other's contributions.
-
-Do you have feature requests or want to add **your** new AD-NeRF model? Or maybe provide structures for a new dataset? **We welcome contributions!**
+NeuRAD and SplatAD reconstruct dynamic driving scenes from camera and LiDAR data.
+Contributions of new models, datasets, and fixes are welcome.
 
 <div align="center">
 <a href="https://zenseact.com/">
@@ -78,192 +75,102 @@ Do you have feature requests or want to add **your** new AD-NeRF model? Or maybe
 </div>
 
 # News
-[June 2025] Code for [SplatAD](research.zenseact.com/publications/splatad/) is now released in neurad-studio. The code uses our custom fork of gsplat, found [here](https://github.com/carlinds/splatad), for handling rolling shutter and lidar rendering. For Apptainer users we provide [a recipe](apptainer_recipe) that lets you build an image with all the needed dependencies.
+[June 2025] Code for [SplatAD](https://research.zenseact.com/publications/splatad/) is now released in neurad-studio. The code uses our custom fork of gsplat, found [here](https://github.com/carlinds/splatad), for handling rolling shutter and lidar rendering. For Apptainer users we provide [a recipe](apptainer_recipe) that lets you build an image with all the needed dependencies.
 
 
 # Quickstart
 
-The quickstart will help you get started with the NeuRAD model on a PandaSet sequence.
-For more complex changes (e.g., running with your own data/setting up a new NeRF graph), please refer to our [references](#learn-more).
+Train **SplatAD** or **NeuRAD** on a PandaSet sequence using **uv**. You need
+Linux, uv, Git, GCC/G++, the CUDA 12.8 toolkit (including `nvcc`), and an NVIDIA
+GPU with a compatible driver. The setup script manages Python 3.12 and the
+project's dependencies for you.
 
-## 1. Installation: Setup the environment
+Prefer a container? See [Docker](docs/setup.md#docker) or
+[Apptainer / HPC](docs/setup.md#apptainer).
 
-For Linux machines with CUDA 12.8, including RTX 50-series GPUs, use the
-[uv setup](docs/setup.md) to create a Python 3.12 development environment without Conda:
+## 1. Set up with uv
 
-```bash
-CUDA_HOME=/usr/local/cuda-12.8 bash scripts/setup-env.sh
-source .venv/activate-neurad
-```
-
-The CUDA 11.8 instructions below describe the legacy environment for older GPUs.
-Its Python 3.10 runtime is end of life; use the Python 3.12 setup above for new environments.
-
-### Prerequisites
-
-Our installation steps largely follow Nerfstudio, with some added dataset-specific dependencies. You must have an NVIDIA video card with CUDA installed on the system. This library has been tested with version 11.8 of CUDA. You can find more information about installing CUDA [here](https://docs.nvidia.com/cuda/cuda-quick-start-guide/index.html).
-
-### Create environment
-
-The models require `python >= 3.10`. We recommend using conda to manage dependencies. Make sure to install [Conda](https://docs.conda.io/miniconda.html) before proceeding.
-
-```bash
-conda create --name neurad -y python=3.10
-conda activate neurad
-pip install --upgrade pip
-```
-
-### Dependencies
-
-Install PyTorch with CUDA (this repo has been tested with CUDA 11.7 and CUDA 11.8) and [tiny-cuda-nn](https://github.com/NVlabs/tiny-cuda-nn).
-`cuda-toolkit` is required for building `tiny-cuda-nn`.
-
-For CUDA 11.8:
-
-```bash
-pip install torch==2.0.1+cu118 torchvision==0.15.2+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
-
-conda install -c "nvidia/label/cuda-11.8.0" cuda-toolkit
-
-# Some need to upgrade dill prior to tiny-cuda-nn install
-pip install dill --upgrade
-pip install --upgrade pip "setuptools<70.0"
-
-pip install ninja git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
-```
-
-For support of Waymo-Open-Dataset v2 (requires python3.10, also dependencies from this package are very strict so cannot add it to pyproject.toml and need install first):
-```bash
-pip install waymo-open-dataset-tf-2-11-0==1.6.1
-```
-
-We refer to [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio/blob/v1.0.3/docs/quickstart/installation.md) for more installation support.
-
-### Installing neurad-studio
 ```bash
 git clone https://github.com/georghess/neurad-studio.git
 cd neurad-studio
-pip install -e .
+CUDA_HOME=/usr/local/cuda-12.8 bash scripts/setup-env.sh
+source .venv/activate-neurad
+ns-train --help
 ```
 
-### Installing kernels for SplatAD
-If you want to use [SplatAD](nerfstudio/models/splatad.py), our 3DGS-based method for camera and lidar rendering (paper [here](research.zenseact.com/publications/splatad/)), you will need to also install [our custom fork of gsplat](git@github.com:carlinds/splatad.git).
+Set `CUDA_HOME` to your toolkit's location. The script uses uv to create `.venv`,
+install the repository in editable mode and its pinned dependencies, and build
+tiny-cuda-nn. The custom gsplat fork is installed automatically. Run
+`source .venv/activate-neurad` in each new shell to restore the Python and CUDA
+environment. See [setup details](docs/setup.md#install) for other options.
 
+## 2. Download data
 
-For a container with the same Python 3.12 / CUDA 12.8 environment, follow the
-[Docker build and run instructions](docs/setup.md#docker). The [Dockerfile](Dockerfile)
-builds your checked-out source and installs the custom SplatAD gsplat fork.
-The [Apptainer recipe](apptainer_recipe) uses the same environment; see the
-[Apptainer build and run instructions](docs/setup.md#apptainer).
+Download [PandaSet](https://huggingface.co/datasets/georghess/pandaset) and extract
+it under `data/pandaset`. For the example below, sequence `001` should be at
+`data/pandaset/001`. Dataset-specific instructions are linked in the
+[dataset table](#adding-datasets).
 
-## 2. Training your first model!
-
-The following will train a _NeuRAD_ model. However, training _SplatAD_ instead is as easy as calling a different method name.
-
-### Data preparation
-
-Begin by downloading [PandaSet](https://huggingface.co/datasets/georghess/pandaset) and unzip it under ```data/pandaset```.
-The dataset is no longer hosted by Scale but can be downloaded from the provided huggingface link.
-
-### Training
-
-Training models is done the same way as in nerfstudio, i.e.,
+## 3. Train
 
 ```bash
-# Train NeuRAD
-python nerfstudio/scripts/train.py neurad pandaset-data
+ns-train splatad pandaset-data --data data/pandaset --sequence 001
 ```
 
-If everything works, you should see training progress like the following:
+Replace `splatad` with `neurad` to train NeuRAD. Runs are saved under `outputs/`.
 
-<p align="center">
-    <img width="800" alt="image" src="docs/_static/imgs/readme_training_progress_example.png">
-</p>
+First-run CUDA compilation can take a few minutes. Open the
+viewer URL printed in the terminal; for a remote host, forward port 7007, for
+example with `ssh -L 7007:localhost:7007 user@host`.
 
-Navigating to the link at the end of the terminal will load the webviewer. If you are running on a remote machine, you will need to port forward the websocket port (defaults to 7007).
+If loading fails or the process is killed, check the
+[lower-memory settings](docs/setup.md#neurad-loading-memory). For installation
+errors, see [dependency troubleshooting](docs/setup.md#missing-gsplat-lidar-functions-or-mismatched-cuda-versions).
 
-<p align="center">
-    <img width="800" alt="image" src="docs/_static/imgs/readme_viewer_neurad.png">
-</p>
+## Resume, view, and render
 
-To train SplatAD instead, you simply call
-```bash
-# Train SplatAD
-python nerfstudio/scripts/train.py splatad pandaset-data
-```
-
-### Troubleshooting
-
-If you run into issues, it could be due to the training taking up too much memory. You can try to adjust the model parameters according to the neurad-tiny [vscode launch config](https://github.com/georghess/neurad-studio/blob/master/.vscode/launch.json#L51).
-
-### Resume from checkpoint / visualize existing run
-
-It is possible to load a pretrained model by running
+Run these commands from the repository root with `.venv/activate-neurad` sourced.
 
 ```bash
-pyhton nerfstudio/scripts/train.py neurad pandaset-data --load-dir {outputs/.../nerfstudio_models}
+# Resume training; use the same model and dataset options as the original run.
+ns-train splatad --load-dir outputs/path/to/nerfstudio_models \
+    pandaset-data --data data/pandaset --sequence 001
+
+# Open a saved run in the viewer.
+ns-viewer --load-config outputs/path/to/config.yml
+
+# List rendering and export commands.
+ns-render --help
+ns-export --help
 ```
 
-## Visualize existing run
+## Models and configuration
 
-Given a pretrained model checkpoint, you can start the viewer by running
+| Model | Description |
+| --- | --- |
+| `splatad` | [SplatAD](https://research.zenseact.com/publications/splatad/): Gaussian splatting for camera and LiDAR rendering |
+| `neurad` | [NeuRAD](https://research.zenseact.com/publications/neurad/): NeRF-based camera and LiDAR rendering |
+| `unisim` | [Unofficial UniSim implementation](https://github.com/carlinds/unisim), installed as a plugin |
 
-```bash
-python nerfstudio/scripts/viewer/run_viewer.py --load-config {outputs/.../config.yml}
-```
+Use `ns-train --help` to list models, `ns-train splatad --help` for model options,
+and `ns-train splatad pandaset-data --help` for dataset options. Nerfstudio's
+static-scene methods, such as `nerfacto` and `splatfacto`, are also available.
 
-## 3. Exporting Results
-
-Once you have a NeRF model you can render its output. There are multiple different renders, more info available using
-
-```bash
-python nerfstudio/scripts/render.py --help
-```
-
-
-## 4. Advanced Options
-
-### Available models
-
-We currently provide implementations for the following models:
-- ```splatad```: 3DGS-based. Official implementation for [SplatAD](https://research.zenseact.com/publications/splatad/). This is currently our fastest and best performing model on AD scenes.
-- ```neurad```: NeRF-based. Official implementation for [NeuRAD](https://research.zenseact.com/publications/neurad/).
-- ```unisim```: NeRF-based. This is an unofficial of [UniSim](https://openaccess.thecvf.com/content/CVPR2023/papers/Yang_UniSim_A_Neural_Closed-Loop_Sensor_Simulator_CVPR_2023_paper.pdf). Available as plugin, see [https://github.com/carlinds/unisim](https://github.com/carlinds/unisim) for more info.
-Beside NeuRAD, we also provide our 3DGS-based model SplatAD.
-
-Any of these models can be trained as described above
-```bash
-# Train model
-python nerfstudio/scripts/train.py <model name> pandaset-data
-```
-
-Further, as we build on top of nerfstudio, models such as ```nerfacto``` or ```splatfacto``` are available as well, see nerfstudio for details. However, note that these are made for static scenes.
-
-For a full list of included models run `python nerfstudio/scripts/train.py --help`.
-
-### Modify Configuration
-
-Each model contains many parameters that can be changed, too many to list here. Use the `--help` command to see the full list of configuration options.
-
-```bash
-python nerfstudio/scripts/train.py neurad --help
-```
-
-### Tensorboard / WandB / Comet / Viewer
-
-There are four different methods to track training progress, using the viewer, [tensorboard](https://www.tensorflow.org/tensorboard), [Weights and Biases](https://wandb.ai/site), and [Comet](https://comet.com/?utm_source=nerf&utm_medium=referral&utm_content=github). You can specify which visualizer to use by appending `--vis {viewer, tensorboard, wandb, comet viewer+wandb, viewer+tensorboard, viewer+comet}` to the training command. Simultaneously utilizing the viewer alongside wandb or tensorboard may cause stuttering issues during evaluation steps.
+To log training metrics, set `--vis tensorboard`, `--vis wandb`, or `--vis comet`
+before `pandaset-data`. Use `viewer+tensorboard`, `viewer+wandb`, or `viewer+comet`
+to keep the viewer enabled alongside logging.
 
 # Learn More
 
-And that's it for getting started with the basics of NeuRAD. If you are missing some features, have a look at [Planned Features](#planned-featurestodos) to see if we have plans on implementing this. Otherwise, feel free to open an issue, or even better implement it yourself and open a PR!
-
-If you want to add a dataset, look [here](#adding-datasets). If you want to add a method, have a look [here](#adding-methods).
+Extend the supported [datasets](#adding-datasets) or add a [method](#adding-methods).
+Bug reports and pull requests are welcome.
 
 ## Adding Datasets
 
-We have provided dataparsers for multiple autonomous driving dataset, see below for a complete list. However, your favorite AD dataset might still be missing.
-
-To add a dataset, create `nerfstudio/data/dataparsers/mydataset.py` containing one dataparsers config class `MyADDataParserConfig` and one dataparser class `MyADData`. Preferrably, these inherit from `ADDataParserConfig` and `ADDataParser`, as these provide common functionality and streamline the expected format of AD data. For most datasets, it should then be sufficient to overwrite `_get_cameras`, `_get_lidars`, `_read_lidars`, `_get_actor_trajectories`, and `_generate_dataparser_outputs`.
+The following datasets have dataparsers. To add one, create a module in
+`nerfstudio/data/dataparsers/` with subclasses of `ADDataParserConfig` and
+`ADDataParser`. Implement `_get_cameras`, `_get_lidars`, `_read_lidars`,
+`_get_actor_trajectories`, and `_generate_dataparser_outputs` as needed.
 
 | Data                                                                                          | Cameras | Lidars                                                      |
 | --------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------------------------------- |
@@ -300,12 +207,6 @@ See [our UniSim repo](https://github.com/carlinds/unisim) for reference on how t
 - NeuRAD - SOTA NeRF-based rendering method for dynamic AD scenes
 - SplatAD - SOTA splatting-based rendering method for dynamic AD scenes
 
-
-# Planned Features/TODOs
-
-- [x] 3DGS implementation supporting dynamic objects
-- [x] UniSim plug-in
-- [x] Release code
 
 # Built On
 

@@ -2,7 +2,8 @@
 
 The CUDA 12.8 profile uses Python 3.12, PyTorch 2.7.1, and torchvision 0.22.1.
 It supports RTX 50-series GPUs, which cannot use the original CUDA 11.8 setup.
-The original Conda instructions remain available in the README.
+The [archived Python 3.10 / CUDA 11.8 instructions](https://github.com/georghess/neurad-studio/blob/550e6fb40e2baafc11448750b3e2574618c3572a/README.md#1-installation-setup-the-environment)
+are retained for existing legacy environments; use this profile for new installs.
 
 ## Install
 
@@ -105,7 +106,10 @@ pytest
 ## Docker
 
 The Dockerfile uses the same setup script and dependency constraints as the local
-CUDA 12.8 environment. It builds the source in your checkout. The host needs an
+CUDA 12.8 environment. It installs the CUDA compiler and headers needed by the
+custom kernels; PyTorch supplies its own CUDA math libraries and headers. The
+container environment exposes those headers through `CPATH` for extension builds.
+It builds the source in your checkout. The host needs an
 NVIDIA driver supporting CUDA 12.8 and NVIDIA Container Toolkit for GPU access;
 a host CUDA toolkit or Python installation is not required.
 
@@ -137,6 +141,12 @@ At runtime, verify GPU access with:
 docker run --rm --gpus all neurad-studio \
     python -c 'import torch, tinycudann; print(torch.cuda.get_device_name())'
 ```
+
+Docker caches dependency installation and viewer compilation separately from the
+source code. Editing Python files or documentation only rebuilds the final
+checkout-installation layer. Changes to dependency files, setup scripts, or GPU
+architectures rebuild the dependency layer. Build caches are kept on the build
+host, and viewer Node tooling is removed from the finished image.
 
 Python and the virtual environment live under `/opt/neurad-venv`; gsplat compiles
 its CUDA kernels there on first use. Waymo's legacy TensorFlow packages are not
@@ -180,6 +190,11 @@ directory. The source and virtual environment inside the SIF are read-only;
 gsplat's runtime CUDA cache defaults to `$HOME/.cache/neurad/torch_extensions`
 (or under `XDG_CACHE_HOME` when set). To use writable scratch space instead,
 bind it and pass `--env TORCH_EXTENSIONS_DIR=/scratch/neurad/torch_extensions`.
+Viewer Node tooling and download caches are removed after the frontend is built.
+For faster SIF compression with a recent Apptainer/mksquashfs installation, add
+`--mksquashfs-args '-comp zstd -Xcompression-level 3 -processors 4 -mem 2G'` to
+`apptainer build`. This changes image compression, not the installed environment.
+The default gzip compression remains available when compatibility requires it.
 Waymo's legacy TensorFlow environment remains a separate install.
 
 ## Missing gsplat lidar functions or mismatched CUDA versions

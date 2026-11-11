@@ -195,3 +195,4 @@ camera_paths/
 .aws
 .env.*
 .ruff_cache
+*.sif
