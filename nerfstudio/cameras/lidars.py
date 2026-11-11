@@ -86,6 +86,7 @@ class Lidars(TensorDataclass):
             and will be broadcasted to the rays generated from any derivative RaySamples we create with this
     """
 
+    assume_ego_compensated: bool
     lidar_to_worlds: Float[Tensor, "*num_lidars 3 4"]
     lidar_type: Float[Tensor, "*num_lidars 1"]
     times: Optional[Int[Tensor, "*num_lidars 1"]]
@@ -147,10 +148,10 @@ class Lidars(TensorDataclass):
         self.azimuths = self._init_get_azimuths(azimuths)
         self.elevations = self._init_get_elevations(elevations)
 
+        self.assume_ego_compensated = assume_ego_compensated
         self.__post_init__()  # This will do the dataclass post_init and broadcast all the tensors
 
         self._use_nerfacc = strtobool(os.environ.get("INTERSECT_WITH_NERFACC", "TRUE"))
-        self.assume_ego_compensated = assume_ego_compensated
 
         self.valid_lidar_distance_threshold = valid_lidar_distance_threshold
 
