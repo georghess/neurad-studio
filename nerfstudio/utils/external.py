@@ -24,15 +24,15 @@ class _LazyError:
             self.__data = data  # pylint: disable=unused-private-member
 
         def __call__(self, *args, **kwds):
-            name, exc = object.__getattribute__(self, "__data")
+            name, exc = self.__data
             raise RuntimeError(f"Could not load package {name}.") from exc
 
         def __getattr__(self, __name: str):
-            name, exc = object.__getattribute__(self, "__data")
+            name, exc = self.__data
             raise RuntimeError(f"Could not load package {name}") from exc
 
     def __getattr__(self, __name: str):
-        return _LazyError.LazyErrorObj(object.__getattribute__(self, "__data"))
+        return _LazyError.LazyErrorObj(self.__data)
 
 
 TCNN_EXISTS = False
@@ -49,10 +49,10 @@ except ModuleNotFoundError as _exp:
 except ImportError as _exp:
     tcnn_import_exception = _exp
 except EnvironmentError as _exp:
-    if "Unknown compute capability" not in _exp.args[0]:
+    if "Unknown compute capability" not in str(_exp):
         raise _exp
     print("Could not load tinycudann: " + str(_exp), file=sys.stderr)
     tcnn_import_exception = _exp
 
 if tcnn_import_exception is not None:
-    tcnn = _LazyError(tcnn_import_exception)
+    tcnn = _LazyError(("tinycudann", tcnn_import_exception))

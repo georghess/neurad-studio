@@ -754,7 +754,7 @@ def chamfer_distance(
         source_pc: Source point cloud [N,3].
         target_pc: Target point cloud [M,3].
         chunk_size: Chunk size to use for computing chamfer distance. If None, use full point clouds.
-        normalize_with_target: Whether to normalize chamfer distance with target point cloud size.
+        normalize_with_target: Divide the sum of both directed squared distances by the target point count.
 
     Returns:
         torch.Tensor: Chamfer distance between source and target.
@@ -780,19 +780,10 @@ def chamfer_distance(
         for i in range(0, source_pc.shape[1], chunk_size):
             max_idx = min(i + chunk_size, source_pc.shape[1])
             min_dist_source_to_target_add, _ = _chamfer_dist(source_pc[:, i:max_idx], target_pc)
-            min_dist_source_to_target_add = (
-                min_dist_source_to_target_add / target_pc.shape[1]
-                if normalize_with_target
-                else min_dist_source_to_target_add
-            )
             min_dist_source_to_target += min_dist_source_to_target_add
         for i in range(0, target_pc.shape[1], chunk_size):
             max_idx = min(i + chunk_size, target_pc.shape[1])
             min_dist_target_to_source_add, _ = _chamfer_dist(target_pc[:, i:max_idx], source_pc)
-            min_dist_target_to_source_add = (
-                min_dist_target_to_source_add / target_pc.shape[1]
-                if normalize_with_target
-                else min_dist_target_to_source_add
-            )
             min_dist_target_to_source += min_dist_target_to_source_add
-    return min_dist_source_to_target + min_dist_target_to_source
+    distance = min_dist_source_to_target + min_dist_target_to_source
+    return distance / target_pc.shape[1] if normalize_with_target else distance
