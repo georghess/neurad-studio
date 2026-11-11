@@ -736,8 +736,8 @@ def modify_actors(pipeline, actor_shift, actor_removal_time, actor_stop_time, ac
 
         pipeline.model.dynamic_actors.actor_positions[:, indices, :] += actor_shift
         if actor_removal_time is not None:
-            no_actor_mask = pipeline.model.dynamic_actors.unique_timestamps > actor_removal_time
-            pipeline.model.dynamic_actors.actor_present_at_time[no_actor_mask, indices] = False
+            time_indices = torch.where(pipeline.model.dynamic_actors.unique_timestamps > actor_removal_time)[0]
+            pipeline.model.dynamic_actors.actor_present_at_time[time_indices[:, None], indices] = False
         if actor_stop_time is not None:
             actor_stop_idx = torch.searchsorted(pipeline.model.dynamic_actors.unique_timestamps, actor_stop_time)
             freeze_position = pipeline.model.dynamic_actors.actor_positions[actor_stop_idx, indices].unsqueeze(0)
